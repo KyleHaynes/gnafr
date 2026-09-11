@@ -58,6 +58,19 @@
 #' @param weights Named list of score weights. Defaults to postcode = 20,
 #'   suburb = 15, street_name = 40, street_type = 10, number = 10, flat = 5.
 #'   Weights must sum to 100.
+#' @details Street numbers compare both range endpoints: exact intervals earn
+#'   full number weight, a candidate containing the input earns 70%, a candidate
+#'   contained by the input earns 50%, and partial overlap earns 30%. Number
+#'   suffixes are checked immediately before the candidate street in its label,
+#'   including labels with unit, level or building prefixes.
+#'
+#'   Street directions qualify the street-type score: agreement keeps full
+#'   credit, a missing direction halves it, and conflicting directions score
+#'   zero. Unit and level identifiers contribute independently to the flat
+#'   score (60% unit, 40% level when both dimensions are present). Missing
+#'   identifiers earn half credit; conflicting identifiers earn none. UNIT,
+#'   APARTMENT and FLAT are equivalent designators, as are LEVEL and FLOOR.
+#'   These scores measure agreement; they are not calibrated probabilities.
 #' @param normalize Passed to \code{address_parse}; defaults to \code{TRUE}.
 #' @param cache If \code{TRUE} (default), checks \code{gnaf_match_cache} for
 #'   previously matched addresses and stores new high-confidence results. The
@@ -358,7 +371,7 @@ gnaf_match <- function(addresses, con, max_results = 1L, min_score = 60L,
     }
 
     weak_ids <- best_by_input[
-      total_score <= fallback_threshold & score_suburb < 13L,
+      total_score <= fallback_threshold & score_suburb < round(weights$suburb * 0.85),
       input_id
     ]
     matched_ids   <- best_by_input$input_id
@@ -420,12 +433,12 @@ gnaf_match <- function(addresses, con, max_results = 1L, min_score = 60L,
     street_alias_ids <- unique(c(
       unmatched_alias_ids,
       current_best[
-        total_score <= alias_weak_threshold & score_street_name < 30L,
+        total_score <= alias_weak_threshold & score_street_name < round(weights$street_name * 0.75),
         input_id
       ]
     ))
     locality_alias_ids <- current_best[
-      total_score <= alias_weak_threshold & score_suburb < 13L,
+      total_score <= alias_weak_threshold & score_suburb < round(weights$suburb * 0.85),
       unique(input_id)
     ]
 
@@ -648,11 +661,9 @@ gnaf_match <- function(addresses, con, max_results = 1L, min_score = 60L,
 }
 
 # Coarse street-number pre-filter shared by the postcode, state and locality
-# paths: when the input carries a number, only keep candidates whose number
-# matches exactly, covers it as a range, or (suffixed inputs like "190A")
-# matches the address_label prefix. Range bounds are checked explicitly;
-# "OR g.number_last IS NOT NULL" without bounds would pull every range record
-# regardless of the input number.
+# paths: keep intersecting numeric intervals, or recover a suffixed number from
+# the candidate label when its numeric field is missing. Bounds are explicit
+# so unrelated ranges do not inflate the candidate set.
 .number_prefilter_sql <- function() {
   paste(
     "(",
@@ -660,11 +671,11 @@ gnaf_match <- function(addresses, con, max_results = 1L, min_score = 60L,
     "  OR (i.in_lot_number IS NULL AND (",
     "    i.in_number_first IS NULL",
     "    OR g.number_first = i.in_number_first",
-    "    OR (g.number_last IS NOT NULL",
-    "        AND g.number_first <= i.in_number_first",
-    "        AND i.in_number_first <= g.number_last)",
+    "    OR (g.number_first <= COALESCE(i.in_number_last, i.in_number_first)",
+    "        AND i.in_number_first <= COALESCE(g.number_last, g.number_first))",
     "    OR (g.number_first IS NULL AND i.in_number_suffix IS NOT NULL",
-    "        AND starts_with(g.address_label, CAST(i.in_number_first AS VARCHAR) || i.in_number_suffix || ' '))",
+    sprintf("        AND %s = CAST(i.in_number_first AS VARCHAR) || i.in_number_suffix)",
+            .candidate_number_token_sql()),
     "  ))",
     ")"
   )
@@ -699,12 +710,12 @@ gnaf_match <- function(addresses, con, max_results = 1L, min_score = 60L,
   score_total <- paste(names(exprs), collapse = " + ")
   raw_projection <- "SELECT
     g.address_detail_pid, g.address_label,
-    g.postcode, g.locality_name, g.street_name, g.street_type,
+    g.postcode, g.locality_name, g.street_name, g.street_type, g.street_suffix,
     g.number_first, g.number_last, g.lot_number,
     g.flat_type, g.flat_number, g.level_type, g.level_number,
     i.input_id,
-    i.in_postcode, i.in_locality, i.in_street_name, i.in_street_type,
-    i.in_number_first, i.in_number_suffix, i.in_lot_number,
+    i.in_postcode, i.in_locality, i.in_street_name, i.in_street_type, i.in_street_suffix,
+    i.in_number_first, i.in_number_last, i.in_number_suffix, i.in_lot_number,
     i.in_flat_type, i.in_flat_number, i.in_level_type, i.in_level_number,
     CASE WHEN i.in_locality IS NOT NULL AND i.in_locality = g.locality_name
          THEN 1.0
@@ -734,14 +745,15 @@ gnaf_match <- function(addresses, con, max_results = 1L, min_score = 60L,
       )),
       branch(paste(
         "i.in_lot_number IS NULL AND i.in_number_first IS NOT NULL",
-        "AND g.number_last IS NOT NULL",
-        "AND g.number_first < i.in_number_first",
-        "AND i.in_number_first <= g.number_last"
+        "AND g.number_first != i.in_number_first",
+        "AND g.number_first <= COALESCE(i.in_number_last, i.in_number_first)",
+        "AND i.in_number_first <= COALESCE(g.number_last, g.number_first)"
       )),
       branch(paste(
         "i.in_lot_number IS NULL AND i.in_number_first IS NOT NULL",
         "AND i.in_number_suffix IS NOT NULL AND g.number_first IS NULL",
-        "AND starts_with(g.address_label, CAST(i.in_number_first AS VARCHAR) || i.in_number_suffix || ' ')"
+        sprintf("AND %s = CAST(i.in_number_first AS VARCHAR) || i.in_number_suffix",
+                .candidate_number_token_sql())
       )),
       branch(
         "i.in_lot_number IS NULL AND i.in_number_first IS NULL"
@@ -1172,12 +1184,12 @@ expanded AS (
 raw_candidates AS (
   SELECT
     g.address_detail_pid, g.address_label,
-    g.postcode, g.locality_name, g.street_name, g.street_type,
+    g.postcode, g.locality_name, g.street_name, g.street_type, g.street_suffix,
     g.number_first, g.number_last, g.lot_number,
     g.flat_type, g.flat_number, g.level_type, g.level_number,
     i.input_id,
-    i.in_postcode, i.in_locality, i.in_street_name, i.in_street_type,
-    i.in_number_first, i.in_number_suffix, i.in_lot_number,
+    i.in_postcode, i.in_locality, i.in_street_name, i.in_street_type, i.in_street_suffix,
+    i.in_number_first, i.in_number_last, i.in_number_suffix, i.in_lot_number,
     i.in_flat_type, i.in_flat_number, i.in_level_type, i.in_level_number,
     CASE WHEN i.in_locality IS NOT NULL AND i.in_locality = g.locality_name
          THEN 1.0

@@ -214,13 +214,34 @@ gnaf_match("13 Fairway Avenue, Clear Island Waters QLD 4226", con, min_score = 0
 ]
 ```
 
+Street directions also qualify this component: matching directions retain the
+street-type credit, a direction missing on one side halves it, and conflicting
+directions score zero. Codes such as `N` and `NTH` compare equal to `NORTH`.
+
 ### Street number (default weight 10)
 
-Three tiers, mirrored identically in SQL and R:
+Both input and candidate ranges are treated as inclusive intervals:
 
-- Exact match to `number_first` → full weight
-- Falls within `number_first`–`number_last` (a ranged G-NAF record, e.g. `13-27`) → 70% of weight
-- No match → 0
+| Relationship | Example input → candidate | Fraction of number weight |
+|---|---|---:|
+| Exact number or interval | `10–20` → `10–20` | 100% |
+| Candidate contains input | `12` → `10–20` | 70% |
+| Input contains candidate | `10–20` → `12` | 50% |
+| Partial overlap | `10–20` → `18–25` | 30% |
+| Disjoint intervals or missing input number | `10–20` → `30` | 0% |
+
+An explicit lot identifier takes precedence and requires exact agreement.
+The first point in a larger candidate range receives containment credit, rather
+than an exact score. Ranges do not imply odd/even parity, and matching returns
+existing records without creating synthetic addresses.
+
+A supplied number suffix must agree with the house-number token immediately
+before the candidate's street name. This works with prefixes such as
+`UNIT 2 LEVEL 3 10A MAIN ROAD`; a unit numbered `10A` cannot substitute for house
+`10B`. An omitted input suffix halves number credit when the candidate supplies
+one. The database does not store house-number suffixes separately, so suffix
+matching still depends on a usable address label. The parser currently retains
+only the first endpoint's suffix in a range.
 
 ```{r}
 gnaf_match("15 Fairway Drive, Clear Island Waters QLD 4226", con, verbose = FALSE)[
@@ -228,18 +249,11 @@ gnaf_match("15 Fairway Drive, Clear Island Waters QLD 4226", con, verbose = FALS
 ]
 ```
 
-A parsed numeric **suffix** (`"190A"`) is handled as its own rule layered on top:
-it only earns credit when the *candidate's* `address_label` literally starts with
-`"<number><suffix> "` — e.g. input `190A` only matches a G-NAF row whose label starts
-with `"190A "`, not merely a row whose `number_first` is `190`. This avoids treating
-`190A` and `190B` (almost certainly different physical units) as equivalent just
-because they share a numeric prefix.
-
 ::: {.callout-warning}
 ## The number filter is a gate, not a soft score
 Unlike every other component, an unmatched street number doesn't just *score* zero —
-in most paths, candidates whose number doesn't satisfy the pre-filter (exact, in
-range, or the suffix label-prefix rule) are excluded from the SQL join entirely and
+in most paths, candidates whose number doesn't satisfy the pre-filter (intersecting numeric intervals, or a suffixed house number
+recovered from the candidate label) are excluded from the SQL join entirely and
 never reach scoring at all. An input with a house number that simply isn't in G-NAF
 for that street comes back `matched = FALSE`, `match_status = "no_candidate"` — not
 a low-scoring row you can raise by lowering `min_score`:
@@ -262,13 +276,28 @@ so an input can still resolve to the right street when its exact number isn't (y
 in G-NAF.
 :::
 
-### Flat / unit (default weight 5)
+### Flat / unit and level (default weight 5)
 
-Binary: full weight if both sides have no flat (or matching flat numbers), 0
-otherwise — including when only one side has a flat number. A flat number on the
-input that the candidate doesn't have at all is treated as a mismatch, not a "can't
-tell" no-op, since a different unit at the same street number is a meaningfully
-different physical address.
+Flat and level identifiers are compared independently. Each earns full credit
+for agreement, half for a missing identifier on one side, and zero for conflict.
+When both dimensions occur on either side, 60% of the flat weight goes to units
+and 40% to levels. Otherwise the present dimension receives the whole weight.
+With both dimensions absent, the existing full credit is retained.
+
+For matching identifiers, `UNIT`, `APARTMENT` and `FLAT` are equivalent, as are
+`LEVEL` and `FLOOR`. Other conflicting supplied types halve that dimension's
+credit. Case and surrounding whitespace are ignored; alphanumeric identifiers
+remain distinct. The combined component is rounded once, using the same rules
+in R and DuckDB.
+
+For input `UNIT 2 LEVEL 3`, unit 2 on level 3 scores 5, unit 2 with a missing level
+scores 4, and unit 2 on level 4 scores 3. These are heuristic agreement scores,
+not calibrated probabilities: even a high total can contain a unit conflict.
+Use component scores and labelled examples to set acceptance criteria.
+
+The six public weights and score columns remain unchanged. Locality and alias
+fallback cutoffs scale with custom weights, and cache algorithm version 4 ignores
+scores computed by older versions.
 
 ## Matching paths {#sec-matching-paths}
 

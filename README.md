@@ -37,15 +37,11 @@ See [https://kylehaynes.github.io/gnafr](https://kylehaynes.github.io/gnafr) for
 ## Installation
 
 ```r
-# Install dependencies
-install.packages(c("data.table", "DBI", "duckdb", "stringdist"))
+# Install dependencies.
+# install.packages(c("devtools"))
 
-# Install gnafr from Github
+# Install gnafr from Github.
 devtools::install_github("KyleHaynes/gnafr")
-
-
-# Optional app dependencies
-install.packages(c("shiny", "reactable"))
 ```
 
 ---
@@ -155,7 +151,7 @@ You can launch an interactive geocoding app against the same DuckDB database:
 ```r
 library(gnafr)
 
-gnaf_app(db_path = "C:/temp/gnafx.duckdb")
+gnaf_app(db_path = "C:/temp/gnafx23.duckdb")
 # or reuse an existing connection:
 gnaf_app(con = con)
 ```
@@ -322,28 +318,52 @@ results <- gnaf_match(
 
 **Street name (40 pts)** — Jaro-Winkler similarity scaled 0–40.
 
-**Street type (10 pts)** — normalised exact match.  
-`RD` and `ROAD` are both normalised to `ROAD` before comparison, so they match. If only one side has a type (e.g. input omitted it), 5 pts partial credit.
+**Street type and direction (10 pts)** — matching types earn full credit;
+one missing type earns half credit, and conflicting types earn 40%. A street
+direction then qualifies that score: matching directions retain it, a direction
+missing on one side halves it, and conflicting directions receive zero. Direction
+codes such as `N` and `NTH` compare equal to `NORTH`.
 
-**Street number or lot (10 pts)** — three tiers:
+**Street number or lot (10 pts)** — both endpoints participate in range matching:
 
-- Exact street-number or explicit lot-number match → 10 pts
-- Number falls within `number_first`..`number_last` range → 7 pts
-- No match → 0 pts
+| Relationship | Example input → candidate | Points |
+|---|---|---:|
+| Exact number, range or explicit lot | `10–20` → `10–20` | 10 |
+| Candidate contains input | `12` → `10–20` | 7 |
+| Input contains candidate | `10–20` → `12` | 5 |
+| Partial overlap | `10–20` → `18–25` | 3 |
+| Disjoint numbers | `10–20` → `30` | 0 |
 
-**Flat / level (5 pts)** — flat and level identifiers are compared together. Matching identifiers receive full credit, conflicting supplied types receive partial credit, and missing or mismatched identifiers receive zero.
+Number suffixes are checked immediately before the candidate's street name in
+its label, including `UNIT 2 LEVEL 3 10A MAIN ROAD`. A supplied suffix must agree;
+omitting a candidate's suffix halves the number score. Range matching is inclusive
+and does not infer odd/even parity or create synthetic addresses.
+
+**Flat / level (5 pts)** — identifiers are compared independently. When both
+dimensions occur on either side, units use 60% and levels 40% of this weight;
+otherwise the present dimension uses all of it. An exact identifier earns full
+credit, a missing identifier half, and a conflict zero. `UNIT`, `APARTMENT` and
+`FLAT` are equivalent designators, as are `LEVEL` and `FLOOR`; other conflicting
+types halve credit for a matching identifier. Components are rounded once after
+combining their evidence. With both dimensions absent, the existing full credit
+is retained.
+
+For input `UNIT 2 LEVEL 3`, candidates with unit 2 and level 3, a missing level,
+or level 4 score **5, 4, and 3** respectively. These comparisons use the existing
+six weights and output columns. Locality/alias fallback cutoffs scale with custom
+weights. Cache algorithm version 4 bypasses older scores automatically.
 
 ### Interpreting scores
 
 | Score range | Typical meaning |
 |-------------|-----------------|
-| 90–100 | Near-certain match, all components agree |
+| 90–100 | Strong overall agreement; inspect component discrepancies |
 | 75–89 | High confidence; minor variation in suburb or street name spelling |
 | 60–74 | Reasonable match; one significant discrepancy (e.g. wrong street type or suburb spelling) |
 | 40–59 | Low confidence; review manually |
 | < 60 | Filtered out by default (`min_score = 60`) |
 
-A high score with full street-name, postcode, and number components is generally the strongest automation signal; calibrate thresholds on your own labelled data.
+Scores measure weighted agreement, not the probability that an address is correct. Even a high total can hide a conflicting unit or other low-weight field. Calibrate thresholds on labelled data and inspect the component scores for your workflow.
 
 ---
 
@@ -757,7 +777,7 @@ gnaf_load(con, "C:/temp/gnaf.qld.csv")
 If you are working from the Geoscape G-NAF Standard distribution rather than a pre-built CSV, `gnaf_build_db()` is the one-call way to go from a fresh database straight to match-ready — it runs `gnaf_init()`, `gnaf_load_psv()` and `gnaf_build_street_aliases()` in sequence, and captures every column the raw extract publishes (mesh block code, primary/secondary dwelling linkage, address site name, legal parcel ID, geocode type, and more — not just the fields needed for string matching):
 
 ```r
-con <- gnaf_connect("C:/temp/gnafx.duckdb")
+con <- gnaf_connect("C:/temp/gnafx23.duckdb")
 
 gnaf_build_db(
   con,

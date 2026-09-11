@@ -2,7 +2,7 @@
 # Match cache: fast lookup for previously-matched high-confidence addresses
 # ---------------------------------------------------------------------------
 
-.CACHE_ALGORITHM_VERSION <- 3L
+.CACHE_ALGORITHM_VERSION <- 4L
 
 #' Show the current state of the match cache
 #'

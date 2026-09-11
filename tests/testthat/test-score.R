@@ -18,7 +18,7 @@ make_pair <- function(in_street_type, street_type,
     in_street_name = in_street_name, street_name = street_name,
     in_street_type = in_street_type, street_type = street_type,
     in_number_first = in_number_first, number_first = number_first,
-    number_last = number_last,
+    number_last = number_last, in_number_last = NA_integer_,
     in_flat_number = in_flat_number, flat_number = flat_number,
     in_flat_type = in_flat_type, flat_type = flat_type,
     in_level_number = in_level_number, level_number = level_number,
@@ -160,7 +160,7 @@ test_that("flat number match scores full weight; mismatch scores 0", {
   expect_equal(out_miss$score_flat, 0L)
 })
 
-test_that("flat and level identifiers form one backward-compatible score", {
+test_that("flat and level identifiers retain independent evidence", {
   full <- make_pair(
     "ROAD", "ROAD", in_flat_number = "2", flat_number = "2",
     in_flat_type = "UNIT", flat_type = "UNIT",
@@ -168,13 +168,13 @@ test_that("flat and level identifiers form one backward-compatible score", {
     in_level_type = "LEVEL", level_type = "LEVEL"
   )
   conflict <- copy(full)
-  conflict[, level_type := "FLOOR"]
+  conflict[, level_type := "BASEMENT"]
   missing <- copy(full)
   missing[, level_number := NA_character_]
 
   expect_equal(gnafr:::.score_pairs(full)$score_flat, 5L)
-  expect_equal(gnafr:::.score_pairs(conflict)$score_flat, 2L)
-  expect_equal(gnafr:::.score_pairs(missing)$score_flat, 0L)
+  expect_equal(gnafr:::.score_pairs(conflict)$score_flat, 4L)
+  expect_equal(gnafr:::.score_pairs(missing)$score_flat, 4L)
 })
 
 test_that("explicit lot number replaces street number scoring", {
@@ -255,4 +255,88 @@ test_that("custom weights use the same rounding in R and DuckDB", {
     expected <- gnafr:::.score_pairs(copy(pairs), weights)
     expect_equal(actual, expected[, names(expressions), with = FALSE])
   }
+})
+
+test_that("number scoring distinguishes exact, contained and overlapping ranges", {
+  pairs <- make_pair("ROAD", "ROAD", number_first = c(10L, 10L, 12L, 18L, 30L),
+                     number_last = c(20L, 30L, NA_integer_, 25L, 40L))
+  pairs[, in_number_last := 20L]
+  expect_equal(gnafr:::.score_pairs(pairs)$score_number, c(10L, 7L, 5L, 3L, 0L))
+
+  # The first point in a candidate range is still only a contained address.
+  single <- make_pair("ROAD", "ROAD", number_first = 10L, number_last = 20L)
+  expect_equal(gnafr:::.score_pairs(single)$score_number, 7L)
+})
+
+test_that("number suffixes follow the house number after unit and building prefixes", {
+  pairs <- make_pair("ROAD", "ROAD", in_flat_number = "2", flat_number = "2")
+  pairs <- pairs[rep(1L, 5L)]
+  pairs[, `:=`(
+    in_number_suffix = "A",
+    address_label = c("UNIT 2 LEVEL 3 10A MAIN ROAD, BRISBANE QLD 4000",
+                      "MAIN CENTRE 2/10A MAIN ROAD, BRISBANE QLD 4000",
+                      "UNIT 10A 10B MAIN ROAD, BRISBANE QLD 4000",
+                      "110A MAIN ROAD, BRISBANE QLD 4000", NA_character_)
+  )]
+  # A suffix must belong to the requested number, not a unit or longer number.
+  pairs[4L, number_first := 110L]
+  expect_equal(gnafr:::.score_pairs(pairs)$score_number, c(10L, 10L, 0L, 0L, 0L))
+
+  pairs <- pairs[1L]
+  pairs[, in_number_suffix := NA_character_]
+  expect_equal(gnafr:::.score_pairs(pairs)$score_number, 5L)
+})
+
+test_that("directions distinguish matching, missing and conflicting streets", {
+  pairs <- make_pair("ROAD", "ROAD")
+  pairs <- pairs[rep(1L, 3L)]
+  pairs[, `:=`(in_street_suffix = "NORTH", street_suffix = c("NORTH", NA, "SOUTH"))]
+  expect_equal(gnafr:::.score_pairs(pairs)$score_street_type, c(10L, 5L, 0L))
+  pairs[, street_suffix := "N"]
+  expect_equal(gnafr:::.score_pairs(pairs)$score_street_type, rep(10L, 3L))
+})
+
+test_that("missing subaddress evidence ranks between agreement and conflict", {
+  pairs <- make_pair("ROAD", "ROAD", in_flat_number = "2", flat_number = "2",
+                     in_level_number = "3", level_number = c("3", NA, "4"))
+  expect_equal(gnafr:::.score_pairs(pairs)$score_flat, c(5L, 4L, 3L))
+  pairs <- make_pair("ROAD", "ROAD", in_flat_number = "2", flat_number = c("2", NA, "4"))
+  expect_equal(gnafr:::.score_pairs(pairs)$score_flat, c(5L, 2L, 0L))
+  # Case and surrounding whitespace do not change alphanumeric identifiers.
+  pairs <- make_pair("ROAD", "ROAD", in_flat_number = " 2a ", flat_number = "2A")
+  expect_equal(gnafr:::.score_pairs(pairs)$score_flat, 5L)
+  pairs[, `:=`(in_flat_type = "APARTMENT", flat_type = "UNIT",
+                in_level_number = "3", level_number = "3",
+                in_level_type = "FLOOR", level_type = "LEVEL")]
+  expect_equal(gnafr:::.score_pairs(pairs)$score_flat, 5L)
+})
+
+test_that("granular SQL and R scores agree for missing inputs and custom weights", {
+  pairs <- make_pair("ROAD", "ROAD", number_first = c(10L, 12L, 10L, NA_integer_, 10L, 10L),
+                     number_last = c(20L, NA_integer_, 25L, NA_integer_, NA_integer_, NA_integer_))
+  pairs[, `:=`(
+    in_number_last = c(20L, 20L, 20L, NA_integer_, NA_integer_, NA_integer_),
+    in_number_suffix = c(NA, NA, NA, "A", "B", NA),
+    address_label = c(NA, NA, NA, "UNIT 2 10A MAIN ROAD", "10A MAIN ROAD", NA),
+    in_flat_number = "2", flat_number = c("2", NA, "4", "2", "2", "2"),
+    in_level_number = "3", level_number = c("3", "3", "3", NA, "4", "3"),
+    in_street_suffix = "NORTH", street_suffix = c("N", NA, "SOUTH", "NORTH", "NORTH", "NORTH"),
+    in_flat_type = "APARTMENT", flat_type = "UNIT",
+    in_level_type = "FLOOR", level_type = "LEVEL"
+  )]
+  con <- gnaf_connect(":memory:")
+  on.exit(gnaf_disconnect(con), add = TRUE)
+  duckdb::duckdb_register(con, "granular_pairs", pairs)
+  on.exit(duckdb::duckdb_unregister(con, "granular_pairs"), add = TRUE)
+  for (weights in list(gnafr:::.default_match_weights(),
+                       list(postcode = 20, suburb = 15, street_name = 39,
+                            street_type = 10.5, number = 8, flat = 7.5))) {
+    expressions <- gnafr:::.score_sql_exprs(weights, i = "p", g = "p")
+    sql <- paste(sprintf("%s AS %s", expressions, names(expressions)), collapse = ", ")
+    actual <- as.data.table(DBI::dbGetQuery(con, paste("SELECT", sql, "FROM granular_pairs p")))
+    expected <- gnafr:::.score_pairs(copy(pairs), weights)
+    expect_equal(actual, expected[, names(expressions), with = FALSE])
+  }
+  empty <- gnafr:::.score_pairs(pairs[0L])
+  expect_identical(empty$total_score, integer())
 })

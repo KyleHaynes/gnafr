@@ -172,7 +172,7 @@ address_parse <- function(addresses, normalize = TRUE) {
   }
 
   base <- fast.string::ftrimws(fast.string::fsub(
-    "\\s+(?:NORTH|SOUTH|EAST|WEST|UPPER|LOWER|INNER|OUTER)$", "", street[idx]
+    "\\s+(?:NORTH|SOUTH|EAST|WEST|UPPER|LOWER|INNER|OUTER|NTH|STH|N|S|E|W)$", "", street[idx]
   ))
   loc <- stringi::stri_locate_last_regex(base, resources$st_regex)
   exact <- !is.na(loc[, 1L]) & loc[, 2L] == nchar(base)
@@ -545,7 +545,7 @@ address_parse <- function(addresses, normalize = TRUE) {
   # ------------------------------------------------------------------
   # Stage 3: optional street suffix then locality from after_st_raw.
   # ------------------------------------------------------------------
-  sfx_re <- "^(NORTH|SOUTH|EAST|WEST|UPPER|LOWER|INNER|OUTER)\\b"
+  sfx_re <- "^(NORTH|SOUTH|EAST|WEST|UPPER|LOWER|INNER|OUTER|NTH|STH|N|S|E|W)\\b"
   sfx_m  <- stringi::stri_match_first_regex(after_st_raw, sfx_re)
   has_sfx <- !is.na(sfx_m[, 1L])
 
@@ -1029,7 +1029,7 @@ address_parse <- function(addresses, normalize = TRUE) {
   }
 
   # 4. Street suffix (NORTH/SOUTH/EAST/WEST immediately after street type)
-  sfx_re <- "^(NORTH|SOUTH|EAST|WEST|UPPER|LOWER|INNER|OUTER)\\b"
+  sfx_re <- "^(NORTH|SOUTH|EAST|WEST|UPPER|LOWER|INNER|OUTER|NTH|STH|N|S|E|W)\\b"
   m_sfx <- regexpr(sfx_re, after_raw, perl = TRUE)
   if (m_sfx > 0L) {
     out$in_street_suffix <- substr(after_raw, m_sfx, m_sfx + attr(m_sfx, "match.length") - 1L)

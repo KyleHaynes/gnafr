@@ -542,3 +542,13 @@ test_that("parser validates inputs and keeps a typed zero-row result", {
   expect_type(empty$in_postcode, "integer")
   expect_type(empty$in_level_number, "character")
 })
+
+test_that("abbreviated street directions preserve the street and locality boundary", {
+  out <- address_parse(c("10 Main Rd N, Sydney NSW 2000",
+                         "10 Main Rd Sth, Sydney NSW 2000",
+                         "10 Main Rd, North Sydney NSW 2060"))
+  expect_equal(out$in_street_name, rep("MAIN", 3L))
+  expect_equal(out$in_street_type, rep("ROAD", 3L))
+  expect_equal(out$in_street_suffix, c("N", "STH", NA_character_))
+  expect_equal(out$in_locality, c("SYDNEY", "SYDNEY", "NORTH SYDNEY"))
+})

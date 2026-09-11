@@ -250,3 +250,85 @@ test_that("street-only fallback respects alias exclusions", {
   expect_true(included$matched)
   expect_false(excluded$matched)
 })
+
+test_that("input ranges retrieve interior numbers in postcode, state and locality paths", {
+  con <- new_fixture_connection()
+  on.exit(gnaf_disconnect(con), add = TRUE)
+  rows <- fixture_rows()[4L][rep(1L, 3L)]
+  rows[, `:=`(address_detail_pid = c("INTERIOR", "OVERLAP", "OUTSIDE"),
+              address_label = c("12 RANGE ROAD, BRISBANE QLD 4000",
+                                "18-25 RANGE ROAD, BRISBANE QLD 4000",
+                                "30 RANGE ROAD, BRISBANE QLD 4000"),
+              number_first = c(12L, 18L, 30L), number_last = c(NA_integer_, 25L, NA_integer_))]
+  suppressMessages(gnaf_add(con, rows))
+  out <- gnaf_match(c("10-20 Range Rd, Brisbane QLD 4000",
+                      "10-20 Range Rd, Brisbane QLD",
+                      "10-20 Range Rd, Brisbane QLD 4999"),
+                    con, max_results = 5L, cache = FALSE, verbose = FALSE)
+  for (id in 1:3) {
+    matched <- out[input_id == id]
+    expect_equal(matched$address_detail_pid, c("RANGE", "INTERIOR", "OVERLAP"))
+    expect_equal(matched$score_number, c(10L, 5L, 3L))
+  }
+})
+
+test_that("direction and suffixed unit numbers determine the winning candidate", {
+  con <- gnaf_connect(":memory:")
+  on.exit(gnaf_disconnect(con), add = TRUE)
+  gnaf_init(con)
+  rows <- data.table(
+    address_detail_pid = c("A_WRONG_SUFFIX", "B_WRONG_DIRECTION", "Z_CORRECT"),
+    address_label = c("UNIT 2 10B MAIN ROAD NORTH, BRISBANE QLD 4000",
+                      "UNIT 2 10A MAIN ROAD SOUTH, BRISBANE QLD 4000",
+                      "UNIT 2 10A MAIN ROAD NORTH, BRISBANE QLD 4000"),
+    number_first = 10L, flat_type = "UNIT", flat_number = "2",
+    street_name = "MAIN", street_type = "ROAD", street_suffix = c("N", "S", "N"),
+    locality_name = "BRISBANE", state = "QLD", postcode = 4000L
+  )
+  suppressMessages(gnaf_add(con, rows))
+  out <- gnaf_match(c("Unit 2 10A Main Rd North, Brisbane QLD 4000",
+                      rows$address_label[3L], "Unit 2 10A Main Rd N, Brisbane QLD 4000"),
+                    con, cache = FALSE, verbose = FALSE)
+  expect_equal(out$address_detail_pid, rep("Z_CORRECT", 3L))
+  expect_equal(out$total_score, rep(100L, 3L))
+
+  DBI::dbExecute(con, "UPDATE custom_addresses SET number_first = NULL WHERE address_detail_pid = 'Z_CORRECT'")
+  out <- gnaf_match("Unit 2 10A Main Rd North, Brisbane QLD", con,
+                    cache = FALSE, verbose = FALSE)
+  expect_equal(out$address_detail_pid, "Z_CORRECT")
+  expect_equal(out$score_number, 10L)
+})
+
+test_that("matching units retain credit when level information is incomplete", {
+  con <- new_fixture_connection()
+  on.exit(gnaf_disconnect(con), add = TRUE)
+  rows <- fixture_rows()[1L][rep(1L, 3L)]
+  rows[, `:=`(address_detail_pid = c("Z_MISSING_LEVEL", "B_WRONG_LEVEL", "C_WRONG_UNIT"),
+              address_label = c("UNIT 2 10 SMITH STREET, ST LUCIA QLD 4067",
+                                "UNIT 2 LEVEL 4 10 SMITH STREET, ST LUCIA QLD 4067",
+                                "UNIT 9 LEVEL 3 10 SMITH STREET, ST LUCIA QLD 4067"),
+              flat_number = c("2", "2", "9"), level_number = c(NA, "4", "3"))]
+  suppressMessages(gnaf_add(con, rows))
+  out <- gnaf_match("Apartment 2 Level 3 10 Smith St, St Lucia QLD 4067",
+                    con, max_results = 5L, cache = FALSE, verbose = FALSE)
+  expect_equal(out$address_detail_pid,
+               c("A", "Z_MISSING_LEVEL", "B_WRONG_LEVEL", "A2", "C_WRONG_UNIT"))
+  expect_equal(out$score_flat, c(5L, 4L, 3L, 2L, 2L))
+})
+
+test_that("locality fallback respects custom component weights", {
+  con <- gnaf_connect(":memory:")
+  on.exit(gnaf_disconnect(con), add = TRUE)
+  gnaf_init(con)
+  rows <- data.table(address_detail_pid = c("WRONG", "CORRECT"),
+                     number_first = 10L, street_name = "MAIN", street_type = "ROAD",
+                     locality_name = c("BUNDABERG", "BRISBANE"), state = "QLD",
+                     postcode = c(4000L, 4001L))
+  suppressMessages(gnaf_add(con, rows))
+  out <- gnaf_match("10 Main Rd, Brisbane QLD 4000", con,
+                    weights = list(postcode = 20, suburb = 40, street_name = 15,
+                                   street_type = 10, number = 10, flat = 5),
+                    cache = FALSE, verbose = FALSE)
+  expect_equal(out$address_detail_pid, "CORRECT")
+  expect_equal(out$total_score, 94L)
+})

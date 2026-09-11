@@ -113,3 +113,18 @@ Uses a four-path strategy:
         exists.
 }
 }
+\details{
+Street numbers compare both range endpoints: exact intervals earn
+  full number weight, a candidate containing the input earns 70%, a candidate
+  contained by the input earns 50%, and partial overlap earns 30%. Number
+  suffixes are checked immediately before the candidate street in its label,
+  including labels with unit, level or building prefixes.
+
+  Street directions qualify the street-type score: agreement keeps full
+  credit, a missing direction halves it, and conflicting directions score
+  zero. Unit and level identifiers contribute independently to the flat
+  score (60% unit, 40% level when both dimensions are present). Missing
+  identifiers earn half credit; conflicting identifiers earn none. UNIT,
+  APARTMENT and FLAT are equivalent designators, as are LEVEL and FLOOR.
+  These scores measure agreement; they are not calibrated probabilities.
+}
