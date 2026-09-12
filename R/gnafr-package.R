@@ -28,5 +28,6 @@ utils::globalVariables(c(
   "retained_count", "right", "score_flat", "score_number",
   "score_postcode", "score_street_name", "score_street_type",
   "score_suburb", "simulated_address", "street_type", "text_similarity",
-  "total_score"
+  "total_score", "at", "component", "diff", "flagged", "levenshtein_score",
+  "scope", "score"
 ))

@@ -12,12 +12,12 @@ G-NAF is distributed in two forms:
 
 | Format | What it is | When to use it |
 |---|---|---|
-| **G-NAF Core CSV** | A single, simplified, flattened CSV per state/national extract. | Default choice — smaller, simpler, and what most pipelines need. |
-| **G-NAF Standard PSV** | The full raw product: dozens of pipe-delimited (`.psv`) tables (`ADDRESS_DETAIL`, `ADDRESS_ALIAS`, `STREET_LOCALITY_ALIAS`, `LOCALITY_ALIAS`, …) as Geoscape ships it internally. | When you want official locality/street *alias* records (recognised alternative suburb or street names) in addition to the core data. |
+| **G-NAF Standard PSV** | The full raw product: dozens of pipe-delimited (`.psv`) tables (`ADDRESS_DETAIL`, `ADDRESS_ALIAS`, `STREET_LOCALITY_ALIAS`, `LOCALITY_ALIAS`, …) as Geoscape ships it internally. | Recommended — gets you official locality/street *alias* records (recognised alternative suburb or street names) and every published column. |
+| **G-NAF Core CSV** | A single, simplified, flattened CSV per state/national extract. | Simpler alternative — smaller and quicker when you don't need the official alias tables. |
 
-gnafr can load either ([`gnaf_load()`](05-function-reference.qmd#gnaf_load) for Core
-CSV, [`gnaf_load_psv()`](05-function-reference.qmd#gnaf_load_psv) for the raw PSV
-product) — see [Building a good lookup table](04-build-database.qmd) for how to choose.
+gnafr can load either ([`gnaf_load_psv()`](05-function-reference.qmd#gnaf_load_psv)
+for the raw PSV product, [`gnaf_load()`](05-function-reference.qmd#gnaf_load) for
+Core CSV) — see [Building a good lookup table](04-build-database.qmd) for how to choose.
 
 ## What problem does gnafr solve?
 

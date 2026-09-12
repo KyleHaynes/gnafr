@@ -2,18 +2,46 @@
 #'
 #' @param path Path to the DuckDB file. Pass ":memory:" for an in-memory DB.
 #' @param read_only Open in read-only mode.
+#' @details DuckDB shares file-backed database instances within an R session.
+#'   A connection cannot change the mode of an existing instance. Close its
+#'   connections and release the instance with [gnaf_disconnect()] before
+#'   reopening it in a different mode.
 #' @return A DBI connection object.
 #' @export
 gnaf_connect <- function(path, read_only = FALSE) {
-  DBI::dbConnect(duckdb::duckdb(), dbdir = path, read_only = read_only)
+  if (!is.logical(read_only) || length(read_only) != 1L || is.na(read_only))
+    stop("'read_only' must be TRUE or FALSE", call. = FALSE)
+  drv <- duckdb::duckdb(dbdir = path, read_only = read_only)
+  if (!identical(drv@read_only, read_only))
+    stop("Database is already open in ",
+         if (drv@read_only) "read-only" else "read-write", " mode: ", path,
+         ". Close its connections and call gnaf_disconnect(con, shutdown = TRUE) ",
+         "to release the instance before changing modes.", call. = FALSE)
+  DBI::dbConnect(drv)
 }
 
 #' Disconnect from a gnafr database
 #'
 #' @param con DBI connection returned by \code{gnaf_connect}.
+#' @param shutdown Release the shared DuckDB database instance as well as the
+#'   connection. Default `TRUE`, allowing the file to be reopened in a different
+#'   mode. Close other connections to this database first. Use `FALSE` when
+#'   other connections must continue using the shared instance.
 #' @export
-gnaf_disconnect <- function(con) {
-  DBI::dbDisconnect(con, shutdown = TRUE)
+gnaf_disconnect <- function(con, shutdown = TRUE) {
+  if (!is.logical(shutdown) || length(shutdown) != 1L || is.na(shutdown))
+    stop("'shutdown' must be TRUE or FALSE", call. = FALSE)
+  drv <- con@driver
+  result <- DBI::dbDisconnect(con, shutdown = FALSE)
+  # Recent DuckDB releases ignore dbDisconnect's shutdown argument and retain
+  # the cached driver. Explicitly release it so the next open can change mode.
+  if (shutdown) {
+    if (DBI::dbIsValid(drv)) duckdb::duckdb_shutdown(drv)
+    # Failed statements can leave unreachable result objects holding the file
+    # open on Windows until their finalizers run.
+    invisible(gc())
+  }
+  invisible(result)
 }
 
 #' Initialise the gnafr schema

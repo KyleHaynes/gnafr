@@ -13,6 +13,7 @@ License: MIT + file LICENSE
 Encoding: UTF-8
 LazyData: false
 Imports:
+    bslib,
     cli,
     data.table (>= 1.14.0),
     DBI (>= 1.1.0),

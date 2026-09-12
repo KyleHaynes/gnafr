@@ -17,3 +17,9 @@ A DBI connection object.
 \description{
 Connect to a gnafr DuckDB database
 }
+\details{
+DuckDB shares file-backed database instances within an R session.
+  A connection cannot change the mode of an existing instance. Close its
+  connections and release the instance with [gnaf_disconnect()] before
+  reopening it in a different mode.
+}

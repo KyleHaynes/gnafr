@@ -7,6 +7,16 @@ database that [`gnaf_match()`](05-function-reference.qmd#gnaf_match) matches wel
 against. It's written to run top-to-bottom on a fresh database; each stage explains
 *why* it's there, not just what it does.
 
+::: {.callout-tip}
+## The quick path: `gnaf_build_db()`
+
+If you have the full **G-NAF Standard** product, the one-liner
+`gnaf_build_db(con, "G-NAF …/Standard", states = "QLD")` runs the schema, load, and
+street-alias steps for you. The walkthrough below shows that same pipeline step by
+step — useful when you want to customise it, or when you're working from the simpler
+**G-NAF Core** CSV via [`gnaf_load()`](05-function-reference.qmd#gnaf_load).
+:::
+
 All paths below are placeholders — adjust them to wherever you've downloaded G-NAF
 and want the DuckDB file to live. Every chunk in this chapter is `eval: false`: it
 references files that don't exist in this build environment, but is otherwise

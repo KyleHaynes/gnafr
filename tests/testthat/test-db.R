@@ -1,3 +1,50 @@
+test_that("connections reject a cached mode mismatch and allow explicit reopening", {
+  path <- tempfile(fileext = ".duckdb")
+  on.exit(unlink(path), add = TRUE)
+  writer <- gnaf_connect(path)
+  DBI::dbExecute(writer, "CREATE TABLE demo (id INTEGER)")
+  expect_error(gnaf_connect(path, read_only = TRUE), "already open.*read-write")
+  expect_equal(DBI::dbGetQuery(writer, "SELECT count(*) AS n FROM demo")$n, 0)
+  gnaf_disconnect(writer)
+
+  reader <- gnaf_connect(path, read_only = TRUE)
+  expect_error(gnaf_connect(path), "already open.*read-only")
+  expect_error(DBI::dbRemoveTable(reader, "demo"), "read.only")
+  gnaf_disconnect(reader)
+
+  writer <- gnaf_connect(path, read_only = FALSE)
+  on.exit(gnaf_disconnect(writer), add = TRUE)
+  expect_no_error(DBI::dbRemoveTable(writer, "demo"))
+  expect_false(DBI::dbExistsTable(writer, "demo"))
+})
+
+test_that("shutdown releases overwritten legacy connections after a failed DROP", {
+  path <- tempfile(fileext = ".duckdb")
+  on.exit(unlink(path), add = TRUE)
+  con <- gnaf_connect(path)
+  DBI::dbExecute(con, "CREATE TABLE demo (id INTEGER)")
+  gnaf_disconnect(con)
+  # Reproduce the old helper's silently reused read-only instance and lost handle.
+  con <- DBI::dbConnect(duckdb::duckdb(), dbdir = path, read_only = TRUE)
+  con <- DBI::dbConnect(duckdb::duckdb(), dbdir = path, read_only = FALSE)
+  expect_error(DBI::dbRemoveTable(con, "demo"), "read.only")
+  gnaf_disconnect(con)
+  con <- gnaf_connect(path, read_only = FALSE)
+  on.exit(gnaf_disconnect(con), add = TRUE)
+  expect_no_error(DBI::dbRemoveTable(con, "demo"))
+})
+
+test_that("disconnecting without shutdown preserves other shared connections", {
+  path <- tempfile(fileext = ".duckdb")
+  on.exit(unlink(path), add = TRUE)
+  first <- gnaf_connect(path)
+  second <- gnaf_connect(path)
+  on.exit(gnaf_disconnect(second), add = TRUE)
+  gnaf_disconnect(first, shutdown = FALSE)
+  expect_no_error(DBI::dbExecute(second, "CREATE TABLE demo (id INTEGER)"))
+  expect_true(DBI::dbExistsTable(second, "demo"))
+})
+
 test_that("initialising a legacy schema restores address fields and versions its cache", {
   con <- gnaf_connect(":memory:")
   on.exit(gnaf_disconnect(con), add = TRUE)

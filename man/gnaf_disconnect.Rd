@@ -4,10 +4,15 @@
 \alias{gnaf_disconnect}
 \title{Disconnect from a gnafr database}
 \usage{
-gnaf_disconnect(con)
+gnaf_disconnect(con, shutdown = TRUE)
 }
 \arguments{
 \item{con}{DBI connection returned by \code{gnaf_connect}.}
+
+\item{shutdown}{Release the shared DuckDB database instance as well as the
+connection. Default `TRUE`, allowing the file to be reopened in a different
+mode. Close other connections to this database first. Use `FALSE` when
+other connections must continue using the shared instance.}
 }
 \description{
 Disconnect from a gnafr database

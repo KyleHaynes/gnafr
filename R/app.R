@@ -26,32 +26,108 @@ gnaf_app <- function(con = NULL, db_path = NULL,
     stop("'db_path' must be a single character string")
   }
 
-  ui <- shiny::fluidPage(
+  ui <- bslib::page_sidebar(
+    title = "gnafr geocoder",
+    window_title = "gnafr geocoder",
+    theme = bslib::bs_theme(version = 5),
+    sidebar = bslib::sidebar(
+      id = "gnaf-sidebar",
+      width = 360,
+      open = "desktop",
+      bslib::accordion(
+        id = "gnaf-controls",
+        open = c("connection", "addresses", "run"),
+        bslib::accordion_panel(
+          "Connection",
+          value = "connection",
+          icon = shiny::icon("plug"),
+          shiny::textInput("db_path", "DuckDB path", value = if (is.null(db_path)) "" else db_path),
+          shiny::actionButton("connect", "Connect", class = "btn-primary"),
+          shiny::div(class = "section-gap"),
+          shiny::uiOutput("connection_status")
+        ),
+        bslib::accordion_panel(
+          "Addresses",
+          value = "addresses",
+          icon = shiny::icon("map-location-dot"),
+          shiny::textAreaInput(
+            "addresses",
+            "Addresses (one per line)",
+            rows = 12,
+            placeholder = paste(
+              "10 St James Ct, Tamborine Mountain QLD 4272",
+              "77 broadwater rd mount gravatt east 4122",
+              sep = "\n"
+            )
+          )
+        ),
+        bslib::accordion_panel(
+          "Match options",
+          value = "match",
+          icon = shiny::icon("sliders"),
+          shiny::numericInput("max_results", "Matches per input", value = 3, min = 1, max = 50, step = 1),
+          shiny::numericInput("min_score", "Minimum total score", value = 40, min = 0, max = 100, step = 1),
+          shiny::checkboxInput("include_custom", "Include custom addresses", value = TRUE),
+          shiny::checkboxInput("include_aliases", "Include aliases", value = TRUE),
+          shiny::selectizeInput(
+            "alias_types", "Alias types",
+            choices = .gnaf_alias_type_choices(), multiple = TRUE,
+            options = list(placeholder = "All rows (default)")
+          ),
+          shiny::div(
+            class = "help-text",
+            "Leave empty to match every row. Unchecking 'Include aliases' is equivalent to 'Core rows only'."
+          ),
+          shiny::checkboxInput("resolve_principal", "Resolve principal (add principal_* columns)", value = FALSE),
+          shiny::checkboxInput("return_principal", "Return principal address", value = FALSE),
+          shiny::checkboxInput("return_primary", "Return primary address", value = FALSE),
+          shiny::checkboxInput("locality_fallback", "Locality fallback", value = TRUE),
+          shiny::checkboxInput("street_only_fallback", "Street-only fallback", value = FALSE),
+          shiny::numericInput("fallback_threshold", "Fallback threshold", value = 80, min = 0, max = 100, step = 1)
+        ),
+        bslib::accordion_panel(
+          "Scoring weights",
+          value = "weights",
+          icon = shiny::icon("scale-balanced"),
+          shiny::div(class = "help-text", "Weights must sum to 100."),
+          shiny::numericInput("w_postcode", "Postcode", value = 20, min = 0, max = 100, step = 1),
+          shiny::numericInput("w_suburb", "Suburb", value = 15, min = 0, max = 100, step = 1),
+          shiny::numericInput("w_street_name", "Street name", value = 40, min = 0, max = 100, step = 1),
+          shiny::numericInput("w_street_type", "Street type", value = 10, min = 0, max = 100, step = 1),
+          shiny::numericInput("w_number", "Number", value = 10, min = 0, max = 100, step = 1),
+          shiny::numericInput("w_flat", "Flat / level", value = 5, min = 0, max = 100, step = 1)
+        ),
+        bslib::accordion_panel(
+          "Advanced",
+          value = "advanced",
+          icon = shiny::icon("gears"),
+          shiny::checkboxInput("normalize", "Normalise input", value = TRUE),
+          shiny::checkboxInput("cache", "Use match cache", value = TRUE),
+          shiny::numericInput("cache_threshold", "Cache threshold", value = 95, min = 0, max = 100, step = 1),
+          shiny::checkboxInput("verbose", "Verbose output", value = FALSE),
+          shiny::selectizeInput(
+            "geographies", "Geographies",
+            choices = NULL, multiple = TRUE,
+            options = list(placeholder = "None")
+          )
+        ),
+        bslib::accordion_panel(
+          "Run",
+          value = "run",
+          icon = shiny::icon("play"),
+          shiny::actionButton("run_match", "Geocode", class = "btn-success", width = "100%"),
+          shiny::downloadButton("download_results", "Download CSV"),
+          shiny::div(
+            class = "help-text section-gap",
+            "The results table adds full-string Jaro-Winkler and Jaccard similarity scores between each input string and its matched address label."
+          )
+        )
+      )
+    ),
     shiny::tags$head(
-      shiny::tags$script(shiny::HTML(
-        "document.addEventListener('DOMContentLoaded', function() {\n",
-        "  document.addEventListener('click', function(event) {\n",
-        "    var button = event.target.closest('[data-toggle-sidebar]');\n",
-        "    if (!button) return;\n",
-        "    var layout = document.getElementById('gnaf-app-layout');\n",
-        "    if (!layout) return;\n",
-        "    layout.classList.toggle('sidebar-collapsed');\n",
-        "    button.textContent = layout.classList.contains('sidebar-collapsed') ? 'Show controls' : 'Hide controls';\n",
-        "  });\n",
-        "});"
-      )),
       shiny::tags$style(shiny::HTML(jsdiffr::diff_css_default())),
       shiny::tags$style(shiny::HTML(
-        ".app-shell {max-width: 100%; margin: 0 auto; padding: 0 20px 24px;}\n",
-        ".app-header {display:flex; align-items:flex-start; justify-content:space-between; gap:16px; margin-top:20px;}\n",
-        ".app-layout {display:grid; grid-template-columns:minmax(280px, 320px) minmax(0, 1fr); gap:20px; align-items:start;}\n",
-        ".app-layout.sidebar-collapsed {grid-template-columns:0 minmax(0, 1fr);}\n",
-        ".sidebar-panel {overflow:hidden; transition:opacity 0.2s ease, padding 0.2s ease, border-width 0.2s ease; min-width:0;}\n",
-        ".app-layout.sidebar-collapsed .sidebar-panel {opacity:0; padding:0; border-width:0; height:0; pointer-events:none;}\n",
-        ".content-panel {min-width:0;}\n",
-        ".sidebar-toggle {border-radius:999px; border:1px solid #bcccdc; background:#fff; color:#102a43; padding:8px 14px; font-weight:600;}\n",
-        ".app-title {margin: 20px 0 6px; font-size: 30px; font-weight: 700; color: #102a43;}\n",
-        ".app-subtitle {margin-bottom: 22px; color: #486581;}\n",
+        ".app-subtitle {margin: 0 0 16px; color: #486581;}\n",
         ".panel {background: #f8fbff; border: 1px solid #d9e2ec; border-radius: 14px; padding: 18px;}\n",
         ".metric-grid {display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; margin: 16px 0 20px;}\n",
         ".metric-card {background: linear-gradient(135deg, #102a43, #1f5f8b); color: #fff; border-radius: 14px; padding: 16px 18px;}\n",
@@ -69,112 +145,60 @@ gnaf_app <- function(con = NULL, db_path = NULL,
         ".diff-cell {padding: 0px 1px;}\n",
         ".diff-cell .jsdiff-pre {white-space: pre-wrap; font-size: 12px;}\n",
         ".diff-controls {margin: 16px 0;}\n",
-        "@media (max-width: 1100px) {.app-layout {grid-template-columns:1fr;} .sidebar-panel {order:2;} .content-panel {order:1;}}\n",
-        "@media (max-width: 900px) {.metric-grid {grid-template-columns: 1fr;} .app-shell {padding:0 12px 24px;}}"
+        "@media (max-width: 900px) {.metric-grid {grid-template-columns: 1fr;}}"
       ))
     ),
     shiny::div(
-      class = "app-shell",
-      shiny::div(
-        class = "app-header",
+      class = "app-subtitle",
+      "Run address matching against your DuckDB-backed GNAF database and inspect text similarity diagnostics for each match."
+    ),
+    shiny::uiOutput("metrics"),
+    shiny::tabsetPanel(
+      shiny::tabPanel("Matches", reactable::reactableOutput("results_table")),
+      shiny::tabPanel("Parsed Inputs", reactable::reactableOutput("parsed_table")),
+      shiny::tabPanel(
+        "Compare",
         shiny::div(
-          shiny::div(class = "app-title", "gnafr geocoder"),
-          shiny::div(
-            class = "app-subtitle",
-            "Run address matching against your DuckDB-backed GNAF database and inspect text similarity diagnostics for each match."
-          )
-        ),
-        shiny::tags$button(
-          type = "button",
-          class = "sidebar-toggle",
-          `data-toggle-sidebar` = "true",
-          "Hide controls"
-        )
-      ),
-      shiny::div(
-        id = "gnaf-app-layout",
-        class = "app-layout",
-        shiny::div(
-          class = "panel sidebar-panel",
-            shiny::textInput("db_path", "DuckDB path", value = if (is.null(db_path)) "" else db_path),
-            shiny::actionButton("connect", "Connect", class = "btn-primary"),
-            shiny::div(class = "section-gap"),
-            shiny::uiOutput("connection_status"),
-            shiny::hr(),
-            shiny::textAreaInput(
-              "addresses",
-              "Addresses",
-              rows = 12,
-              placeholder = paste(
-                "10 St James Ct, Tamborine Mountain QLD 4272",
-                "77 broadwater rd mount gravatt east 4122",
-                sep = "\n"
+          class = "panel diff-controls",
+          shiny::fluidRow(
+            shiny::column(
+              5,
+              shiny::radioButtons(
+                "diff_pair", "Compare",
+                choices = c(
+                  "Input vs Standardised"           = "raw_std",
+                  "Input vs Matched address"         = "raw_match",
+                  "Standardised vs Matched address"  = "std_match"
+                ),
+                selected = "std_match"
               )
             ),
-            shiny::numericInput("max_results", "Matches per input", value = 3, min = 1, max = 20, step = 1),
-            shiny::numericInput("min_score", "Minimum total score", value = 40, min = 0, max = 100, step = 1),
-            shiny::checkboxInput("include_custom", "Include custom addresses", value = TRUE),
-            shiny::checkboxInput("locality_fallback", "Enable locality fallback", value = TRUE),
-            shiny::numericInput("fallback_threshold", "Fallback threshold", value = 80, min = 0, max = 100, step = 1),
-            shiny::actionButton("run_match", "Geocode", class = "btn-success"),
-            shiny::downloadButton("download_results", "Download CSV"),
-            shiny::div(
-              class = "help-text section-gap",
-              "The results table adds full-string Jaro-Winkler and Jaccard similarity scores between each input string and its matched address label."
+            shiny::column(
+              4,
+              shiny::radioButtons(
+                "diff_granularity", "Diff level",
+                choices = c("Words" = "diff_words", "Characters" = "diff_chars"),
+                selected = "diff_chars", inline = TRUE
+              )
+            ),
+            shiny::column(
+              3,
+              shiny::checkboxInput("diff_changes_only", "Only rows with differences", value = FALSE)
             )
-        ),
-        shiny::div(
-          class = "content-panel",
-          shiny::uiOutput("metrics"),
-          shiny::tabsetPanel(
-            shiny::tabPanel("Matches", reactable::reactableOutput("results_table")),
-            shiny::tabPanel("Parsed Inputs", reactable::reactableOutput("parsed_table")),
-            shiny::tabPanel(
-              "Compare",
-              shiny::div(
-                class = "panel diff-controls",
-                shiny::fluidRow(
-                  shiny::column(
-                    5,
-                    shiny::radioButtons(
-                      "diff_pair", "Compare",
-                      choices = c(
-                        "Input vs Standardised"           = "raw_std",
-                        "Input vs Matched address"         = "raw_match",
-                        "Standardised vs Matched address"  = "std_match"
-                      ),
-                      selected = "raw_std"
-                    )
-                  ),
-                  shiny::column(
-                    4,
-                    shiny::radioButtons(
-                      "diff_granularity", "Diff level",
-                      choices = c("Words" = "diff_words", "Characters" = "diff_chars"),
-                      selected = "diff_words", inline = TRUE
-                    )
-                  ),
-                  shiny::column(
-                    3,
-                    shiny::checkboxInput("diff_changes_only", "Only rows with differences", value = FALSE)
-                  )
-                ),
-                shiny::fluidRow(
-                  shiny::column(
-                    12,
-                    shiny::selectizeInput(
-                      "diff_extra_cols", "Additional columns",
-                      choices = .gnaf_diff_extra_choices(), multiple = TRUE,
-                      width = "100%",
-                      options = list(placeholder = "Add columns to show before the comparison columns")
-                    )
-                  )
-                )
-              ),
-              reactable::reactableOutput("diff_table")
+          ),
+          shiny::fluidRow(
+            shiny::column(
+              12,
+              shiny::selectizeInput(
+                "diff_extra_cols", "Additional columns",
+                choices = .gnaf_diff_extra_choices(), multiple = TRUE,
+                width = "100%",
+                options = list(placeholder = "Add columns to show before the comparison columns")
+              )
             )
           )
-        )
+        ),
+        reactable::reactableOutput("diff_table")
       )
     )
   )
@@ -253,9 +277,53 @@ gnaf_app <- function(con = NULL, db_path = NULL,
         return(invisible(NULL))
       }
 
+      # Alias filtering: "Include aliases" unchecked is equivalent to
+      # alias_types = NA (core rows only), and cannot be combined with an
+      # explicit alias_types selection.
+      include_aliases_arg <- isTRUE(input$include_aliases)
+      alias_types_raw <- input$alias_types %||% character(0)
+      if (!include_aliases_arg) {
+        alias_types_arg <- NULL
+      } else if (length(alias_types_raw) == 0L) {
+        alias_types_arg <- NULL
+      } else {
+        alias_types_arg <- if ("__core__" %in% alias_types_raw) {
+          c(NA_character_, setdiff(alias_types_raw, "__core__"))
+        } else {
+          alias_types_raw
+        }
+      }
+
+      # Geographies: empty means none, "__all__" means every registered layer.
+      geographies_raw <- input$geographies %||% character(0)
+      geographies_arg <- if (length(geographies_raw) == 0L) {
+        NULL
+      } else if ("__all__" %in% geographies_raw) {
+        TRUE
+      } else {
+        setdiff(geographies_raw, "__all__")
+      }
+
+      # Scoring weights must sum to 100 before they reach gnaf_match().
+      weights_arg <- list(
+        postcode = as.numeric(input$w_postcode),
+        suburb = as.numeric(input$w_suburb),
+        street_name = as.numeric(input$w_street_name),
+        street_type = as.numeric(input$w_street_type),
+        number = as.numeric(input$w_number),
+        flat = as.numeric(input$w_flat)
+      )
+      if (!isTRUE(all.equal(sum(unlist(weights_arg)), 100, tolerance = 1e-8))) {
+        shiny::showNotification(
+          "Scoring weights must sum to 100. Adjust the weights and try again.",
+          type = "error", duration = NULL
+        )
+        return(invisible(NULL))
+      }
+
       tryCatch({
         shiny::withProgress(message = "Geocoding", value = 0.1, {
-          parsed <- address_parse(addresses)
+          parsed <- address_parse(addresses, normalize = isTRUE(input$normalize))
           shiny::incProgress(0.35, detail = "Parsed input addresses")
 
           matches <- gnaf_match(
@@ -264,8 +332,20 @@ gnaf_app <- function(con = NULL, db_path = NULL,
             max_results = as.integer(input$max_results),
             min_score = as.integer(input$min_score),
             include_custom = isTRUE(input$include_custom),
+            include_aliases = include_aliases_arg,
+            alias_types = alias_types_arg,
+            resolve_principal = isTRUE(input$resolve_principal),
+            return_principal = isTRUE(input$return_principal),
+            return_primary = isTRUE(input$return_primary),
             locality_fallback = isTRUE(input$locality_fallback),
-            fallback_threshold = as.integer(input$fallback_threshold)
+            street_only_fallback = isTRUE(input$street_only_fallback),
+            fallback_threshold = as.integer(input$fallback_threshold),
+            weights = weights_arg,
+            normalize = isTRUE(input$normalize),
+            cache = isTRUE(input$cache),
+            cache_threshold = as.integer(input$cache_threshold),
+            verbose = isTRUE(input$verbose),
+            geographies = geographies_arg
           )
           shiny::incProgress(0.45, detail = "Matched against database")
 
@@ -278,6 +358,28 @@ gnaf_app <- function(con = NULL, db_path = NULL,
         parsed_rv(.gnaf_empty_parsed())
         shiny::showNotification(conditionMessage(e), type = "error", duration = NULL)
       })
+    })
+
+    # Refresh the available geography layers whenever the connection changes.
+    shiny::observe({
+      con2 <- current_con()
+      geo_choices <- if (is.null(con2)) {
+        character(0)
+      } else {
+        geo_names <- tryCatch(
+          gnaf_list_geographies(con2)$name,
+          error = function(e) character(0)
+        )
+        if (length(geo_names) > 0L) {
+          c("All registered" = "__all__", geo_names)
+        } else {
+          character(0)
+        }
+      }
+      shiny::updateSelectizeInput(
+        session, "geographies",
+        choices = geo_choices, selected = character(0)
+      )
     })
 
     session$onSessionEnded(function() {
@@ -373,6 +475,7 @@ gnaf_app <- function(con = NULL, db_path = NULL,
           text_similarity = .gnaf_score_col("Text score", digits = 1),
           jarowinkler_score = .gnaf_score_col("Jaro-Winkler", digits = 1),
           jaccard_score = .gnaf_score_col("Jaccard", digits = 1),
+          levenshtein_score = .gnaf_score_col("Levenshtein", digits = 1),
           longitude = reactable::colDef(format = reactable::colFormat(digits = 6)),
           latitude = reactable::colDef(format = reactable::colFormat(digits = 6))
         ),
@@ -380,7 +483,7 @@ gnaf_app <- function(con = NULL, db_path = NULL,
         theme = .gnaf_reactable_theme(),
         columnGroups = list(
           reactable::colGroup(name = "Comparison", columns = c("input_standardised", "comparison")),
-          reactable::colGroup(name = "Diagnostics", columns = c("total_score", "text_similarity", "jarowinkler_score", "jaccard_score"))
+          reactable::colGroup(name = "Diagnostics", columns = c("total_score", "text_similarity", "jarowinkler_score", "jaccard_score", "levenshtein_score"))
         ),
         details = function(index) {
           row <- results[index, ]
@@ -521,7 +624,7 @@ gnaf_app <- function(con = NULL, db_path = NULL,
 }
 
 .gnaf_require_app_packages <- function() {
-  needed <- c("shiny", "reactable", "jsdiffr")
+  needed <- c("shiny", "bslib", "reactable", "jsdiffr")
   missing <- needed[!vapply(needed, requireNamespace, logical(1), quietly = TRUE)]
   if (length(missing) > 0L) {
     stop(
@@ -533,34 +636,78 @@ gnaf_app <- function(con = NULL, db_path = NULL,
   }
 }
 
-.gnaf_prepare_app_results <- function(results) {
-  if (!is.data.table(results) || nrow(results) == 0L) {
-    return(.gnaf_empty_app_results())
+# Alias-type choices offered in the Match options panel. "__core__" is a sentinel
+# for core (non-alias) rows, translated to NA in the run_match observer.
+.gnaf_alias_type_choices <- function() {
+  c(
+    "Core rows (no alias)" = "__core__",
+    "Street-only aliases" = "street_only",
+    "Address aliases (ADDRESS:RA)" = "ADDRESS:RA",
+    "Address synonyms (ADDRESS:SYN)" = "ADDRESS:SYN",
+    "Locality synonyms (LOCALITY:SYN)" = "LOCALITY:SYN",
+    "Locality street refs (LOCALITY:SR)" = "LOCALITY:SR",
+    "Street synonyms (STREET:SYN)" = "STREET:SYN",
+    "Street alternatives (STREET:ALT)" = "STREET:ALT"
+  )
+}
+
+#' Add full-string text similarity scores to `gnaf_match()` results
+#'
+#' Compares each input string with its matched address label (both normalised
+#' the same way as [gnaf_match()] does) and appends four 0-100 similarity
+#' columns: `jarowinkler_score`, `jaccard_score` (character bigrams),
+#' `levenshtein_score` (1 minus edit distance over the longer string) and
+#' `text_similarity` (the mean of the Jaro-Winkler and Jaccard scores).
+#' Unmatched rows get `NA`.
+#'
+#' These are whole-string diagnostics that complement the component scores
+#' from matching, and are the extra columns shown in [gnaf_app()] and
+#' [gnaf_threshold_filter()]. The filter code generated by the threshold app
+#' calls this function when a text-score threshold is in use.
+#'
+#' @param x A `data.table` returned by [gnaf_match()].
+#' @return A copy of `x` with the four score columns appended.
+#' @examples
+#' \dontrun{
+#' scored <- gnaf_text_scores(gnaf_match(addresses, con))
+#' scored[jarowinkler_score < 85]
+#' }
+#' @export
+gnaf_text_scores <- function(x) {
+  if (!is.data.table(x)) stop("'x' must be a data.table returned by gnaf_match()")
+  missing_cols <- setdiff(c("input_raw", "address_label", "matched"), names(x))
+  if (length(missing_cols) > 0L) {
+    stop("'x' is missing columns: ", paste(missing_cols, collapse = ", "))
   }
 
-  out <- copy(results)
-  out[, comparison := ""]
+  out <- copy(x)
   input_norm <- .normalize_addr(out$input_raw)
   match_norm <- .normalize_addr(fifelse(is.na(out$address_label), "", out$address_label))
   matched_idx <- out$matched %in% TRUE & !is.na(out$address_label)
 
-  jw <- rep(NA_real_, nrow(out))
-  jaccard <- rep(NA_real_, nrow(out))
+  jw <- jaccard <- lev <- rep(NA_real_, nrow(out))
   if (any(matched_idx)) {
-    jw[matched_idx] <- fast.string::jaro_winkler(
-      input_norm[matched_idx], match_norm[matched_idx], p = 0.1
-    )
-    jaccard[matched_idx] <- 1 - stringdist::stringdist(
-      input_norm[matched_idx], match_norm[matched_idx], method = "jaccard", q = 2
-    )
+    left <- input_norm[matched_idx]
+    right <- match_norm[matched_idx]
+    jw[matched_idx] <- fast.string::jaro_winkler(left, right, p = 0.1)
+    jaccard[matched_idx] <- 1 - stringdist::stringdist(left, right, method = "jaccard", q = 2)
+    lev[matched_idx] <- 1 - stringdist::stringdist(left, right, method = "lv") /
+      pmax(nchar(left), nchar(right), 1L)
   }
 
   out[, jarowinkler_score := round(pmax(jw, 0) * 100, 1)]
-  out[!matched_idx, jarowinkler_score := NA_real_]
   out[, jaccard_score := round(pmax(jaccard, 0) * 100, 1)]
-  out[!matched_idx, jaccard_score := NA_real_]
+  out[, levenshtein_score := round(pmax(lev, 0) * 100, 1)]
   out[, text_similarity := round((jarowinkler_score + jaccard_score) / 2, 1)]
-  out[!matched_idx, text_similarity := NA_real_]
+  out[]
+}
+
+.gnaf_prepare_app_results <- function(results) {
+  if (!is.data.table(results) || nrow(results) == 0L) {
+    return(.gnaf_empty_app_results())
+  }
+  out <- gnaf_text_scores(results)
+  out[, comparison := ""]
   out[]
 }
 
@@ -609,6 +756,7 @@ gnaf_app <- function(con = NULL, db_path = NULL,
     comparison = character(),
     jarowinkler_score = numeric(),
     jaccard_score = numeric(),
+    levenshtein_score = numeric(),
     text_similarity = numeric()
   )
 }
@@ -667,7 +815,10 @@ gnaf_app <- function(con = NULL, db_path = NULL,
   palette[idx]
 }
 
-.gnaf_score_col <- function(name, digits = 1) {
+# Colour relative to `max` (a component's weight) rather than 100, so a full
+# street_type score of 10 reads as strong instead of as a weak red.
+.gnaf_score_col <- function(name, digits = 1, max = 100) {
+  if (!is.finite(max) || max <= 0) max <- 100
   reactable::colDef(
     name = name,
     align = "center",
@@ -676,9 +827,10 @@ gnaf_app <- function(con = NULL, db_path = NULL,
       if (length(value) == 0L || is.na(value)) {
         return(list(background = "#f3f4f6", color = "#6b7280", fontWeight = 500))
       }
+      pct <- 100 * value / max
       list(
-        background = .gnaf_score_fill(value),
-        color = if (isTRUE(value >= 70)) "#f8fafc" else "#102a43",
+        background = .gnaf_score_fill(pct),
+        color = if (isTRUE(pct >= 70)) "#f8fafc" else "#102a43",
         fontWeight = 700
       )
     }

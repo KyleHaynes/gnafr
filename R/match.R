@@ -38,6 +38,20 @@
 #'   record the alias was derived from. \code{NA} for non-alias rows and for
 #'   aliases with no \code{principal_pid} (e.g. \code{street_only}). Default
 #'   \code{FALSE}.
+#' @param return_principal If \code{TRUE}, replace an alias match's address
+#'   fields with the full non-alias record linked by \code{principal_pid}.
+#'   Default \code{FALSE}. Unlike \code{resolve_principal}, this changes the
+#'   returned \code{address_detail_pid}, label, components and coordinates.
+#' @param return_primary If \code{TRUE}, replace a secondary match's address
+#'   fields with the full primary record linked by \code{primary_pid}.
+#'   Default \code{FALSE}. When both return options are enabled, resolve the
+#'   principal first, then its primary address.
+#' @param geographies Registered geography names, e.g. `"sa2_2021"`, or `TRUE`
+#'   for all available layers. Default `NULL` adds none. Attributes are appended
+#'   for the final returned PID/source, after principal/primary resolution.
+#'   Missing assignments remain `NA`; match order, ranks and scores are retained.
+#'   See [gnaf_list_geographies()], [gnaf_add_geography()] and
+#'   [gnaf_join_geographies()]. Column-name collisions are errors.
 #' @param locality_fallback If \code{TRUE} (default), re-searches by locality
 #'   name for unmatched inputs and results below \code{fallback_threshold}
 #'   whose locality component is weak.
@@ -71,6 +85,16 @@
 #'   identifiers earn half credit; conflicting identifiers earn none. UNIT,
 #'   APARTMENT and FLAT are equivalent designators, as are LEVEL and FLOOR.
 #'   These scores measure agreement; they are not calibrated probabilities.
+#'
+#'   The return options apply after matching, ranking and cache storage. Scores,
+#'   ranks and parsed input fields still describe the original match, recorded
+#'   in \code{matched_address_detail_pid} and \code{matched_address_label}
+#'   whenever either option is enabled. All returned address fields come from
+#'   the linked record, including missing values. Missing or unavailable links
+#'   leave the matched address unchanged. Lookups include custom addresses when
+#'   \code{include_custom = TRUE}, preferring GNAF if a PID exists in both tables.
+#'   Multiple matches resolving to the same address retain their original rows
+#'   and ranks. \code{resolve_principal} columns describe the original alias.
 #' @param normalize Passed to \code{address_parse}; defaults to \code{TRUE}.
 #' @param cache If \code{TRUE} (default), checks \code{gnaf_match_cache} for
 #'   previously matched addresses and stores new high-confidence results. The
@@ -96,7 +120,10 @@ gnaf_match <- function(addresses, con, max_results = 1L, min_score = 60L,
                        normalize = TRUE,
                        cache = TRUE,
                        cache_threshold = 95L,
-                       verbose = TRUE) {
+                       verbose = TRUE,
+                       return_principal = FALSE,
+                       return_primary = FALSE,
+                       geographies = NULL) {
 
   legacy_order <- tryCatch(DBI::dbIsValid(addresses), error = function(e) FALSE) &&
     is.character(con)
@@ -127,6 +154,7 @@ gnaf_match <- function(addresses, con, max_results = 1L, min_score = 60L,
       stop("'", arg, "' must be one number between 0 and 100", call. = FALSE)
   }
   for (arg in c("include_custom", "include_aliases", "resolve_principal",
+                "return_principal", "return_primary",
                 "locality_fallback", "street_only_fallback", "normalize", "cache", "verbose")) {
     value <- get(arg)
     if (!is.logical(value) || length(value) != 1L || is.na(value))
@@ -134,6 +162,7 @@ gnaf_match <- function(addresses, con, max_results = 1L, min_score = 60L,
   }
 
   weights <- .validate_match_weights(weights)
+  geography_specs <- .geography_specs(con, geographies)
 
   if (!isTRUE(include_aliases)) {
     if (!is.null(alias_types))
@@ -429,16 +458,18 @@ gnaf_match <- function(addresses, con, max_results = 1L, min_score = 60L,
     unmatched_alias_ids <- match_inputs[
       !input_id %in% current_best$input_id, input_id
     ]
-    alias_weak_threshold <- min(fallback_threshold, min_score + 5L)
+    # Same trigger as the locality fallback above: total_score <= fallback_threshold
+    # decides "try harder", independent of min_score (which only gates final
+    # result inclusion, after all fallback paths have run).
     street_alias_ids <- unique(c(
       unmatched_alias_ids,
       current_best[
-        total_score <= alias_weak_threshold & score_street_name < round(weights$street_name * 0.75),
+        total_score <= fallback_threshold & score_street_name < round(weights$street_name * 0.75),
         input_id
       ]
     ))
     locality_alias_ids <- current_best[
-      total_score <= alias_weak_threshold & score_suburb < round(weights$suburb * 0.85),
+      total_score <= fallback_threshold & score_suburb < round(weights$suburb * 0.85),
       unique(input_id)
     ]
 
@@ -593,9 +624,51 @@ gnaf_match <- function(addresses, con, max_results = 1L, min_score = 60L,
   ))
 
   if (isTRUE(resolve_principal)) out <- .resolve_principal(con, out)
+  if (return_principal || return_primary) {
+    out[, `:=`(matched_address_detail_pid = address_detail_pid,
+               matched_address_label = address_label)]
+    if (return_principal)
+      out <- .return_linked_address(con, out, "principal_pid", include_custom)
+    if (return_primary)
+      out <- .return_linked_address(con, out, "primary_pid", include_custom)
+  }
+
+  if (nrow(geography_specs)) out <- .join_geography_specs(out, con, geography_specs)
 
   .cli_match_summary(verbose, parsed, out, total_timer, verbose_stats)
   out[]
+}
+
+# Replace the complete address record so labels, components and geocodes never
+# mix fields from the original match and its linked address. Cache entries retain
+# the original candidate; returning linked records is specific to this call.
+.return_linked_address <- function(con, out, link_column, include_custom) {
+  pids <- out[[link_column]]
+  rows <- which(out$matched & !is.na(pids) & nzchar(trimws(pids)))
+  if (length(rows) == 0L) return(out)
+
+  links <- data.table(address_detail_pid = unique(pids[rows]))
+  duckdb::duckdb_register(con, "__gnafr_return_links__", links, overwrite = TRUE)
+  on.exit(duckdb::duckdb_unregister(con, "__gnafr_return_links__"), add = TRUE)
+
+  tables <- "gnaf_addresses"
+  if (include_custom && DBI::dbExistsTable(con, "custom_addresses"))
+    tables <- c(tables, "custom_addresses")
+  lookup <- rbindlist(lapply(tables, function(table) {
+    setDT(DBI::dbGetQuery(con, sprintf(
+      "SELECT %s FROM %s g
+       JOIN __gnafr_return_links__ l USING (address_detail_pid)",
+      .GNAF_SELECT_COLS, table
+    )))
+  }), use.names = TRUE)
+  lookup <- unique(lookup, by = "address_detail_pid")
+  target <- match(pids[rows], lookup$address_detail_pid)
+  found <- !is.na(target)
+  if (!any(found)) return(out)
+
+  for (col in names(lookup))
+    set(out, i = rows[found], j = col, value = lookup[[col]][target[found]])
+  out
 }
 
 # Adds principal_address_label / principal_longitude / principal_latitude /
@@ -1569,17 +1642,21 @@ WHERE r.match_rank <= %d
 }
 
 # Exact address_label pass: returns scored candidate pairs for any input whose
-# raw text (uppercased) matches a GNAF address_label exactly.
+# standardised text (uppercased, abbreviations expanded) matches a GNAF
+# address_label exactly. Keying on the standardised form rather than the raw
+# input means common abbreviations ("St" vs "Street") still hit this fast path
+# instead of falling through to the slow path, where alias rows (e.g.
+# ADDRESS:SYN) are excluded unless the best core candidate is weak.
 .exact_label_match <- function(con, parsed, include_custom, alias_types = NULL,
                                 weights = .default_match_weights(),
                                 min_score = 0L) {
-  raw_upper <- unique(toupper(trimws(parsed$input_raw)))
-  raw_upper <- raw_upper[nzchar(raw_upper) & !is.na(raw_upper)]
-  if (length(raw_upper) == 0L) return(NULL)
+  std_upper <- unique(toupper(trimws(parsed$input_standardised)))
+  std_upper <- std_upper[nzchar(std_upper) & !is.na(std_upper)]
+  if (length(std_upper) == 0L) return(NULL)
 
   # Register as a virtual table so DuckDB can hash-join instead of scanning
   # with a 50k-item IN() literal (which kills the query planner at scale).
-  lkp <- data.table(lbl_key = raw_upper)
+  lkp <- data.table(lbl_key = std_upper)
   duckdb::duckdb_register(con, "__gnafr_exact_lkp__", lkp, overwrite = TRUE)
   on.exit(try(duckdb::duckdb_unregister(con, "__gnafr_exact_lkp__"), silent = TRUE))
 
@@ -1617,7 +1694,7 @@ WHERE r.match_rank <= %d
 
   cands[, lbl_key := toupper(trimws(address_label))]
   pi <- copy(parsed)
-  pi[, lbl_key := toupper(trimws(input_raw))]
+  pi[, lbl_key := toupper(trimws(input_standardised))]
 
   joined <- cands[pi, on = "lbl_key", nomatch = 0L, allow.cartesian = TRUE]
   joined[, lbl_key := NULL]

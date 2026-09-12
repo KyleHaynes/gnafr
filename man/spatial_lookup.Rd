@@ -12,7 +12,8 @@ spatial_lookup(
   return_cols = NULL,
   chunk_size = 100000L,
   multiple = c("first", "all"),
-  verbose = TRUE
+  verbose = TRUE,
+  points_crs = 4326
 )
 }
 \arguments{
@@ -26,17 +27,31 @@ spatial_lookup(
 
 \item{return_cols}{Character vector of columns from `shapes` to return (default: all non-geometry columns).}
 
-\item{chunk_size}{Integer number of points to process per chunk (tune for memory).}
+\item{chunk_size}{Integer number of points to process per chunk (tune for memory).
+Use `NULL` to process all points in a single spatial lookup, without batching.}
 
 \item{multiple}{If `"first"` (default) return first matching polygon per point; if `"all"` return all matches.}
 
 \item{verbose}{Print progress messages if `TRUE`.}
+
+\item{points_crs}{CRS of the input coordinates, accepted by `sf::st_crs`.
+Default 4326 (WGS84 longitude/latitude). Use the datum of the source data,
+e.g. 7844 for GDA2020 or 4283 for GDA94. For projected coordinates, `lon`
+names the easting/x column and `lat` names the northing/y column.}
 }
 \value{
 A `data.table` combining the input point columns with the requested polygon attributes (one row per input point or per match if `multiple = "all"`).
 }
 \description{
 Map a table of latitude/longitude points to attributes from a polygon
-shapefile. Designed for speed: points are processed in chunks and the
-spatial index on the polygons is used via `sf::st_intersects`.
+shapefile. Points are processed in chunks using the indexed
+`sf::st_intersects` predicate. Repeated coordinates within each chunk are
+looked up once, then expanded back to the original rows.
+}
+\details{
+Coordinates are transformed to the polygon CRS before lookup.
+  Missing, non-finite and out-of-range geographic coordinates return missing
+  polygon attributes. Empty polygons are ignored. With `multiple = "first"`,
+  overlapping polygons are resolved in their original row order. Input rows,
+  attribute types and the caller's data are preserved.
 }

@@ -20,7 +20,10 @@ gnaf_match(
   normalize = TRUE,
   cache = TRUE,
   cache_threshold = 95L,
-  verbose = TRUE
+  verbose = TRUE,
+  return_principal = FALSE,
+  return_primary = FALSE,
+  geographies = NULL
 )
 }
 \arguments{
@@ -91,6 +94,23 @@ Default 95.}
 
 \item{verbose}{If \code{TRUE}, prints colored progress, timings, and match
 summary information using the \pkg{cli} package.}
+
+\item{return_principal}{If \code{TRUE}, replace an alias match's address
+fields with the full non-alias record linked by \code{principal_pid}.
+Default \code{FALSE}. Unlike \code{resolve_principal}, this changes the
+returned \code{address_detail_pid}, label, components and coordinates.}
+
+\item{return_primary}{If \code{TRUE}, replace a secondary match's address
+fields with the full primary record linked by \code{primary_pid}.
+Default \code{FALSE}. When both return options are enabled, resolve the
+principal first, then its primary address.}
+
+\item{geographies}{Registered geography names, e.g. `"sa2_2021"`, or `TRUE`
+for all available layers. Default `NULL` adds none. Attributes are appended
+for the final returned PID/source, after principal/primary resolution.
+Missing assignments remain `NA`; match order, ranks and scores are retained.
+See [gnaf_list_geographies()], [gnaf_add_geography()] and
+[gnaf_join_geographies()]. Column-name collisions are errors.}
 }
 \value{
 A \code{data.table} ordered by \code{input_id} then descending
@@ -127,4 +147,14 @@ Street numbers compare both range endpoints: exact intervals earn
   identifiers earn half credit; conflicting identifiers earn none. UNIT,
   APARTMENT and FLAT are equivalent designators, as are LEVEL and FLOOR.
   These scores measure agreement; they are not calibrated probabilities.
+
+  The return options apply after matching, ranking and cache storage. Scores,
+  ranks and parsed input fields still describe the original match, recorded
+  in \code{matched_address_detail_pid} and \code{matched_address_label}
+  whenever either option is enabled. All returned address fields come from
+  the linked record, including missing values. Missing or unavailable links
+  leave the matched address unchanged. Lookups include custom addresses when
+  \code{include_custom = TRUE}, preferring GNAF if a PID exists in both tables.
+  Multiple matches resolving to the same address retain their original rows
+  and ranks. \code{resolve_principal} columns describe the original alias.
 }

@@ -7,7 +7,7 @@
 #' `C:/temp/sa2/SA2_2021_AUST_GDA2020.shp`.
 #'
 #' @param path Path to a shapefile (.shp).
-#' @param quiet If `FALSE` (default) prints messages from `sf::st_read`.
+#' @param quiet If `FALSE` (default), print read messages, CRS and attribute columns.
 #' @param ... Passed to `sf::st_read`.
 #' @return An `sf` object (invisible).
 #' @export
@@ -15,6 +15,7 @@ read_shapefile <- function(path = "C:/temp/sa2/SA2_2021_AUST_GDA2020.shp", quiet
   if (!requireNamespace("sf", quietly = TRUE)) stop("Package 'sf' is required; please install it.")
   if (!file.exists(path)) stop(sprintf("Shapefile not found: %s", path))
   sf_obj <- sf::st_read(path, quiet = quiet, ...)
+  if (isTRUE(quiet)) return(invisible(sf_obj))
   attrs <- sf::st_drop_geometry(sf_obj)
   cols <- names(attrs)
   classes <- vapply(attrs, function(x) paste(class(x), collapse = "/"), character(1))
@@ -44,8 +45,9 @@ subset_shapefile <- function(sf_obj, var, values, invert = FALSE) {
 #' Fast point-in-polygon lookup using `sf` + `data.table`
 #'
 #' Map a table of latitude/longitude points to attributes from a polygon
-#' shapefile. Designed for speed: points are processed in chunks and the
-#' spatial index on the polygons is used via `sf::st_intersects`.
+#' shapefile. Points are processed in chunks using the indexed
+#' `sf::st_intersects` predicate. Repeated coordinates within each chunk are
+#' looked up once, then expanded back to the original rows.
 #'
 #' @param points_dt A `data.table` (or coercible) with longitude and latitude columns.
 #' @param shapes An `sf` polygon object (e.g. as returned by `read_shapefile`).
@@ -53,16 +55,27 @@ subset_shapefile <- function(sf_obj, var, values, invert = FALSE) {
 #' @param lon Name of longitude column in `points_dt` (default `"longitude"`).
 #' @param return_cols Character vector of columns from `shapes` to return (default: all non-geometry columns).
 #' @param chunk_size Integer number of points to process per chunk (tune for memory).
+#'   Use `NULL` to process all points in a single spatial lookup, without batching.
 #' @param multiple If `"first"` (default) return first matching polygon per point; if `"all"` return all matches.
 #' @param verbose Print progress messages if `TRUE`.
+#' @param points_crs CRS of the input coordinates, accepted by `sf::st_crs`.
+#'   Default 4326 (WGS84 longitude/latitude). Use the datum of the source data,
+#'   e.g. 7844 for GDA2020 or 4283 for GDA94. For projected coordinates, `lon`
+#'   names the easting/x column and `lat` names the northing/y column.
+#' @details Coordinates are transformed to the polygon CRS before lookup.
+#'   Missing, non-finite and out-of-range geographic coordinates return missing
+#'   polygon attributes. Empty polygons are ignored. With `multiple = "first"`,
+#'   overlapping polygons are resolved in their original row order. Input rows,
+#'   attribute types and the caller's data are preserved.
 #' @return A `data.table` combining the input point columns with the requested polygon attributes (one row per input point or per match if `multiple = "all"`).
 #' @export
 spatial_lookup <- function(points_dt, shapes, lat = "latitude", lon = "longitude",
                            return_cols = NULL, chunk_size = 100000L,
-                           multiple = c("first", "all"), verbose = TRUE) {
+                           multiple = c("first", "all"), verbose = TRUE,
+                           points_crs = 4326) {
   if (!requireNamespace("sf", quietly = TRUE)) stop("Package 'sf' is required; please install it.")
   multiple <- match.arg(multiple)
-  chunk_size <- .as_positive_integer(chunk_size, "chunk_size")
+  if (!is.null(chunk_size)) chunk_size <- .as_positive_integer(chunk_size, "chunk_size")
   points_dt <- data.table::as.data.table(points_dt)
   if (length(lat) != 1L || length(lon) != 1L ||
       !is.character(lat) || !is.character(lon) ||
@@ -73,6 +86,9 @@ spatial_lookup <- function(points_dt, shapes, lat = "latitude", lon = "longitude
     stop("Latitude/longitude columns must be numeric", call. = FALSE)
   if (!inherits(shapes, "sf") || is.na(sf::st_crs(shapes)))
     stop("'shapes' must be an sf object with a known CRS", call. = FALSE)
+  points_crs <- sf::st_crs(points_crs)
+  if (is.na(points_crs)) stop("'points_crs' must be a known CRS", call. = FALSE)
+  geographic_points <- isTRUE(sf::st_is_longlat(points_crs))
 
   shapes_dt <- data.table::as.data.table(sf::st_drop_geometry(shapes))
   if (is.null(return_cols)) return_cols <- names(shapes_dt)
@@ -87,24 +103,36 @@ spatial_lookup <- function(points_dt, shapes, lat = "latitude", lon = "longitude
   n <- nrow(points_dt)
   if (n == 0L)
     return(cbind(data.table::copy(points_dt), shapes_dt[0L, return_cols, with = FALSE]))
+  if (is.null(chunk_size)) chunk_size <- n
 
   chunk_starts <- seq.int(1L, n, by = chunk_size)
   out_list <- vector("list", length(chunk_starts))
   shapes_crs <- sf::st_crs(shapes)
+  shape_geometry <- sf::st_geometry(shapes)
+  nonempty_shapes <- which(!sf::st_is_empty(shape_geometry))
+  shape_geometry <- shape_geometry[nonempty_shapes]
 
   for (i in seq_along(chunk_starts)) {
     start <- chunk_starts[i]
     end <- min(n, as.double(start) + chunk_size - 1L)
     chunk <- points_dt[start:end]
-    valid <- which(is.finite(chunk[[lon]]) & is.finite(chunk[[lat]]) &
-                     abs(chunk[[lon]]) <= 180 & abs(chunk[[lat]]) <= 90)
+    valid_coordinates <- is.finite(chunk[[lon]]) & is.finite(chunk[[lat]])
+    if (geographic_points)
+      valid_coordinates <- valid_coordinates &
+        abs(chunk[[lon]]) <= 180 & abs(chunk[[lat]]) <= 90
+    valid <- which(valid_coordinates)
     intersections <- vector("list", nrow(chunk))
-    if (length(valid) > 0L) {
-      coordinates <- data.frame(lng = chunk[[lon]][valid], lat = chunk[[lat]][valid])
-      pts_sf <- sf::st_as_sf(coordinates, coords = c("lng", "lat"), crs = 4326)
+    if (length(valid) > 0L && length(nonempty_shapes) > 0L) {
+      coordinates <- data.table::data.table(
+        lng = chunk[[lon]][valid], lat = chunk[[lat]][valid])
+      unique_coordinates <- unique(coordinates)
+      coordinate_rows <- unique_coordinates[coordinates, on = c("lng", "lat"), which = TRUE]
+      pts_sf <- sf::st_as_sf(unique_coordinates, coords = c("lng", "lat"), crs = points_crs)
       if (!identical(sf::st_crs(pts_sf), shapes_crs))
         pts_sf <- sf::st_transform(pts_sf, shapes_crs)
-      intersections[valid] <- sf::st_intersects(pts_sf, shapes, sparse = TRUE)
+      hits <- sf::st_intersects(pts_sf, shape_geometry, sparse = TRUE)
+      hits <- lapply(hits, function(x) nonempty_shapes[x])
+      intersections[valid] <- hits[coordinate_rows]
     }
 
     # Index the original attribute columns so NA rows retain character, Date,

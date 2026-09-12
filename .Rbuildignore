@@ -18,3 +18,4 @@
 ^build_gnaf_database\.R$
 ^load_gnaf\.R$
 ^gnafr-guide\.qmd$
+^example_usage\.MD$

@@ -13,7 +13,7 @@ read_shapefile(
 \arguments{
 \item{path}{Path to a shapefile (.shp).}
 
-\item{quiet}{If `FALSE` (default) prints messages from `sf::st_read`.}
+\item{quiet}{If `FALSE` (default), print read messages, CRS and attribute columns.}
 
 \item{...}{Passed to `sf::st_read`.}
 }
