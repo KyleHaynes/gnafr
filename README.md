@@ -101,7 +101,24 @@ Key arguments:
 | `resolve_principal` | `FALSE` | Add `principal_*` columns resolving alias matches back to their canonical address. |
 | `return_principal` | `FALSE` | Return the full non-alias address linked by `principal_pid`. |
 | `return_primary` | `FALSE` | Return the full primary address linked by `primary_pid`, after principal resolution if enabled. |
+| `geographies` | `NULL` | Append saved geography attributes by registered name, or use `TRUE` for all available layers. |
 | `weights` | defaults | Named list of score weights summing to 100. |
+
+### Saved geographies
+
+Register an existing enrichment table once, then request it directly in matches:
+
+```r
+gnaf_register_geography(con, "sa2_2021", "gnaf_sa2_2021", points_crs = 7844)
+gnaf_list_geographies(con)
+gnaf_geography_coverage(con, "sa2_2021")
+results <- gnaf_match(addresses, con, geographies = "sa2_2021")
+```
+
+Use `gnaf_add_geography()` to calculate a new layer from polygons, or
+`gnaf_join_geographies()` to enrich existing results. `gnaf_remove_geography()`
+removes a layer and its registration. See [example_usage.MD](example_usage.MD)
+for the complete SA2 add, match, coverage and removal demo.
 
 ### Shiny geocoder
 

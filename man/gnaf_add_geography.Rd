@@ -15,18 +15,18 @@ gnaf_add_geography(
 )
 }
 \arguments{
-\item{con}{Writable connection from [gnaf_connect()].}
+\item{con}{Writable connection from \code{\link[=gnaf_connect]{gnaf_connect()}}.}
 
-\item{name}{Short geography name, e.g. `"sa2_2021"`. Names use letters,
+\item{name}{Short geography name, e.g. \code{"sa2_2021"}. Names use letters,
 digits and underscores, start with a letter, and are stored lowercase.}
 
-\item{shapes}{An `sf` polygon object with a known CRS.}
+\item{shapes}{An \code{sf} polygon object with a known CRS.}
 
 \item{return_cols}{Polygon columns to store. A named character vector renames
-them, e.g. `c(sa2_code = "SA2_CODE21", sa2_name = "SA2_NAME21")`.
+them, e.g. \code{c(sa2_code = "SA2_CODE21", sa2_name = "SA2_NAME21")}.
 Default: all non-geometry columns. Choose distinct output names across layers.}
 
-\item{address_table}{`"gnaf_addresses"` (default) or `"custom_addresses"`.}
+\item{address_table}{\code{"gnaf_addresses"} (default) or \code{"custom_addresses"}.}
 
 \item{points_crs}{CRS of the stored coordinates. Default 4326; use 7844 for
 GDA2020 or 4283 for GDA94.}
@@ -38,16 +38,16 @@ Invisibly, the number of stored address rows.
 }
 \description{
 Calculate and store polygon attributes, then register them for use with
-`gnaf_match(..., geographies = name)`. Processes all distinct coordinates
+\code{gnaf_match(..., geographies = name)}. Processes all distinct coordinates
 together, without batching. Existing geographies are never overwritten.
 }
 \details{
-Each geography is a snapshot in its own table, `gnaf_geo_<name>`.
-  Rebuild after changing address coordinates, loading new GNAF data or changing
-  boundaries. Creation and registration are atomic. Missing assignments remain
-  missing; no nearest-polygon substitution is performed.
+Each geography is a snapshot in its own table, \verb{gnaf_geo_<name>}.
+Rebuild after changing address coordinates, loading new GNAF data or changing
+boundaries. Creation and registration are atomic. Missing assignments remain
+missing; no nearest-polygon substitution is performed.
 }
 \seealso{
-[gnaf_list_geographies()], [gnaf_geography_coverage()],
-  [gnaf_join_geographies()], [gnaf_remove_geography()]
+\code{\link[=gnaf_list_geographies]{gnaf_list_geographies()}}, \code{\link[=gnaf_geography_coverage]{gnaf_geography_coverage()}},
+\code{\link[=gnaf_join_geographies]{gnaf_join_geographies()}}, \code{\link[=gnaf_remove_geography]{gnaf_remove_geography()}}
 }

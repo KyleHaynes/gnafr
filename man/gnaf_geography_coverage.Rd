@@ -7,24 +7,24 @@
 gnaf_geography_coverage(con, geographies = TRUE)
 }
 \arguments{
-\item{con}{Connection from [gnaf_connect()]; read-only is supported.}
+\item{con}{Connection from \code{\link[=gnaf_connect]{gnaf_connect()}}; read-only is supported.}
 
-\item{geographies}{Registered names, or `TRUE` for all available geographies.
-`NULL` or `FALSE` adds none.}
+\item{geographies}{Registered names, or \code{TRUE} for all available geographies.
+\code{NULL} or \code{FALSE} adds none.}
 }
 \value{
-A `data.table`, one row per geography attribute, with `geography`,
-  `column`, `address_table`, `address_rows`, `stored_rows`, `non_missing`,
-  `missing`, `coverage_pct` and `orphaned_rows`. Coverage uses current source
-  addresses as the denominator, including missing coordinates. `stored_rows`
-  counts current PIDs present in the enrichment; orphaned rows no longer have
-  a source address. Zero source addresses give `NA_real_` coverage.
+A \code{data.table}, one row per geography attribute, with \code{geography},
+\code{column}, \code{address_table}, \code{address_rows}, \code{stored_rows}, \code{non_missing},
+\code{missing}, \code{coverage_pct} and \code{orphaned_rows}. Coverage uses current source
+addresses as the denominator, including missing coordinates. \code{stored_rows}
+counts current PIDs present in the enrichment; orphaned rows no longer have
+a source address. Zero source addresses give \code{NA_real_} coverage.
 }
 \description{
 Check geography coverage against current addresses
 }
 \details{
 Counts are calculated on demand, not cached. They can reveal newly
-  added or removed PIDs, but cannot detect coordinate edits to an existing PID.
-  Rebuild the geography after such edits.
+added or removed PIDs, but cannot detect coordinate edits to an existing PID.
+Rebuild the geography after such edits.
 }

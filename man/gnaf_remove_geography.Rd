@@ -7,7 +7,7 @@
 gnaf_remove_geography(con, name)
 }
 \arguments{
-\item{con}{Writable connection from [gnaf_connect()].}
+\item{con}{Writable connection from \code{\link[=gnaf_connect]{gnaf_connect()}}.}
 
 \item{name}{Registered geography name.}
 }
@@ -19,6 +19,6 @@ Remove a saved geography and its registration
 }
 \details{
 Drops only the registered enrichment table and its metadata, in one
-  transaction. Source address tables and match cache entries are retained.
-  If the table was already removed manually, its registration is removed.
+transaction. Source address tables and match cache entries are retained.
+If the table was already removed manually, its registration is removed.
 }

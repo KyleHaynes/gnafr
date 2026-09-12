@@ -267,8 +267,12 @@ test_that("input ranges retrieve interior numbers in postcode, state and localit
                     con, max_results = 5L, cache = FALSE, verbose = FALSE)
   for (id in 1:3) {
     matched <- out[input_id == id]
-    expect_equal(matched$address_detail_pid, c("RANGE", "INTERIOR", "OVERLAP"))
-    expect_equal(matched$score_number, c(10L, 5L, 3L))
+    # The postcode path also fills spare result slots with fuzzy candidates
+    # above min_score, even when an exact-component match is already strong.
+    expected_pids <- c("RANGE", "INTERIOR", "OVERLAP", if (id == 1L) "QLD")
+    expected_numbers <- c(10L, 5L, 3L, if (id == 1L) 5L)
+    expect_equal(matched$address_detail_pid, expected_pids)
+    expect_equal(matched$score_number, expected_numbers)
   }
 })
 

@@ -46,7 +46,8 @@ aliases) from matching — equivalent to \code{alias_types = NA}. Default
 \item{alias_types}{Character vector of \code{alias_type} values to include
 in matching. Use \code{NA} to include core GNAF rows (where
 \code{alias_type} is \code{NULL}). Default \code{NULL} matches all rows
-regardless of alias type. Example: \code{c(NA, "street_only")} restricts
+regardless of alias type or match strength; aliases compete with core
+addresses before ranking. Example: \code{c(NA, "street_only")} restricts
 to core addresses and street-level aliases only.}
 
 \item{resolve_principal}{If \code{TRUE}, results that are an alias
@@ -103,14 +104,15 @@ returned \code{address_detail_pid}, label, components and coordinates.}
 \item{return_primary}{If \code{TRUE}, replace a secondary match's address
 fields with the full primary record linked by \code{primary_pid}.
 Default \code{FALSE}. When both return options are enabled, resolve the
-principal first, then its primary address.}
+principal first, then its primary address. Both options apply regardless
+of match strength or \code{fallback_threshold}.}
 
-\item{geographies}{Registered geography names, e.g. `"sa2_2021"`, or `TRUE`
-for all available layers. Default `NULL` adds none. Attributes are appended
+\item{geographies}{Registered geography names, e.g. \code{"sa2_2021"}, or \code{TRUE}
+for all available layers. Default \code{NULL} adds none. Attributes are appended
 for the final returned PID/source, after principal/primary resolution.
-Missing assignments remain `NA`; match order, ranks and scores are retained.
-See [gnaf_list_geographies()], [gnaf_add_geography()] and
-[gnaf_join_geographies()]. Column-name collisions are errors.}
+Missing assignments remain \code{NA}; match order, ranks and scores are retained.
+See \code{\link{gnaf_list_geographies}}, \code{\link{gnaf_add_geography}} and
+\code{\link{gnaf_join_geographies}}. Column-name collisions are errors.}
 }
 \value{
 A \code{data.table} ordered by \code{input_id} then descending
@@ -150,8 +152,9 @@ Street numbers compare both range endpoints: exact intervals earn
 
   The return options apply after matching, ranking and cache storage. Scores,
   ranks and parsed input fields still describe the original match, recorded
-  in \code{matched_address_detail_pid} and \code{matched_address_label}
-  whenever either option is enabled. All returned address fields come from
+  in a complete set of \code{matched_*} address columns whenever either
+  option is enabled (e.g. \code{matched_address_label},
+  \code{matched_longitude} and \code{matched_principal_pid}). All returned address fields come from
   the linked record, including missing values. Missing or unavailable links
   leave the matched address unchanged. Lookups include custom addresses when
   \code{include_custom = TRUE}, preferring GNAF if a PID exists in both tables.

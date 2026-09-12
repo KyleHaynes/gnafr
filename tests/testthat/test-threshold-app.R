@@ -49,6 +49,18 @@ test_that("gnaf_text_scores appends the four similarity columns", {
   expect_error(gnaf_text_scores(data.table::data.table(a = 1)), "missing columns")
 })
 
+test_that("text scores compare the original match when a linked address is returned", {
+  x <- threshold_results()
+  original <- gnaf_text_scores(x)
+  x[, matched_address_label := address_label]
+  x[matched == TRUE, address_label := "A DIFFERENT PRIMARY ADDRESS"]
+  before <- copy(x)
+  resolved <- gnaf_text_scores(x)
+  scores <- c("jarowinkler_score", "jaccard_score", "levenshtein_score", "text_similarity")
+  expect_identical(resolved[, ..scores], original[, ..scores])
+  expect_identical(x, before)
+})
+
 test_that("threshold vars include text scores and maxes come from data and weights", {
   x <- threshold_results()
   data <- .gnaf_threshold_prepare(x)

@@ -2,7 +2,8 @@
 # Match cache: fast lookup for previously-matched high-confidence addresses
 # ---------------------------------------------------------------------------
 
-.CACHE_ALGORITHM_VERSION <- 4L
+# Alias candidates now compete with core records regardless of fallback threshold.
+.CACHE_ALGORITHM_VERSION <- 5L
 
 #' Show the current state of the match cache
 #'

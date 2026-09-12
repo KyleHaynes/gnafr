@@ -100,7 +100,9 @@ canonical_primary <- gnaf_match(
   verbose = FALSE
 )
 canonical_primary[, .(
-  matched_address_detail_pid, address_detail_pid, address_label,
+  matched_address_detail_pid, matched_address_label,
+  address_detail_pid, address_label,
+  matched_longitude, matched_latitude, longitude, latitude,
   alias_principal, primary_secondary, total_score
 )]
 # matched_address_detail_pid: DEMO_ALIAS
@@ -236,11 +238,36 @@ as it is. Street-only matches usually have no principal link. Unmatched inputs
 remain unmatched. Custom records can also be linked when `include_custom = TRUE`;
 GNAF takes precedence if a target PID exists in both tables.
 
-Scores and ranks describe the original candidate. The `matched_address_detail_pid`
-and `matched_address_label` columns preserve that candidate whenever either return
-option is enabled. Cached matches retain the original candidate too, so these
+Aliases compete with core addresses regardless of `fallback_threshold`. Returning
+the principal or primary happens after ranking, even for a perfect match. The
+threshold controls locality fallback; it does not control relationship lookups.
+
+Scores and ranks describe the original candidate. Every original address field
+is preserved with a `matched_` prefix whenever either return option is enabled:
+`matched_address_detail_pid`, `matched_address_label`, `matched_longitude`,
+`matched_latitude`, `matched_principal_pid`, `matched_primary_pid`, and the other
+address components. Unprefixed fields describe the returned address.
+`gnaf_text_scores()` also compares the input with the original matched label.
+Cached matches retain the original candidate too, so these
 options can be changed between calls. With `max_results > 1`, multiple candidates
 can resolve to the same address; their rows and original ranks are retained.
+
+```r
+# Even with locality fallback disabled, resolve a strong alias match.
+con <- gnaf_connect("C:/temp/gnafx23.duckdb", read_only = TRUE)
+comparison <- gnaf_match(
+  "27 Ivo Street, Nundah QLD 4012", con,
+  fallback_threshold = 0L, locality_fallback = FALSE,
+  return_principal = TRUE, return_primary = TRUE
+)
+comparison[, .(
+  input_raw, total_score,
+  matched_address_label, address_label,
+  matched_longitude, longitude, matched_latitude, latitude,
+  matched_principal_pid, matched_primary_pid, address_detail_pid
+)]
+gnaf_disconnect(con)
+```
 
 ## Add SA2 variables to the database
 
@@ -248,10 +275,19 @@ GNAF already contains longitude and latitude. Here we use those coordinates for
 a **point-in-polygon lookup** against the SA2 boundaries, then ingest the SA2 code
 and name into `C:/temp/gnafx23.duckdb`.
 
-The extra variables live in a new table, `gnaf_sa2_2021`, with one row per
-`address_detail_pid`. Keeping the enrichment in its own table makes it easy to
-join, refresh or remove without changing the address-loading schema. The suffix
-records the boundary edition: these are **2021 SA2s**.
+The geography is named `sa2_2021`. Its attributes live in a separate table with
+one row per `address_detail_pid`, and are requested directly in `gnaf_match()`.
+The suffix records the boundary edition: these are **2021 SA2s**.
+
+| Task | Helper |
+|------|--------|
+| Calculate and save a geography | `gnaf_add_geography()` |
+| Adopt an existing enrichment table | `gnaf_register_geography()` |
+| See available layers and columns | `gnaf_list_geographies()` |
+| Check current coverage | `gnaf_geography_coverage()` |
+| Include attributes while matching | `gnaf_match(..., geographies = "sa2_2021")` |
+| Enrich results already in memory | `gnaf_join_geographies()` |
+| Remove a saved geography | `gnaf_remove_geography()` |
 
 ### Read the boundaries
 
@@ -286,7 +322,7 @@ doesn't tell us which datum the database coordinates use. The source for
 For a different database built from a GDA94 download, use EPSG:4283 instead.
 [Geoscape reference systems](https://docs.geoscape.com.au/projects/gnaf_desc/en/stable/reference_system.html).
 
-### Look up all coordinates and ingest the variables
+### Add SA2 once, or register the existing table
 
 This is one operation with **no batching**. SQL retrieves distinct coordinate
 pairs, `spatial_lookup()` assigns their SA2 attributes in one call, and a single
@@ -296,35 +332,30 @@ coordinates reuse the same spatial result.
 ```r
 con <- gnaf_connect("C:/temp/gnafx23.duckdb")  # writable connection
 
-elapsed <- system.time(
-  gnaf_add_spatial(
-    con,
-    shapes = sa2,
-    output_table = "gnaf_sa2_2021",
-    return_cols = c("sa2_code_2021", "sa2_name_2021"),
-    points_crs = gnaf_crs
-  )
-)
-elapsed
+# This block can be rerun: it reuses an existing registration.
+if (!"sa2_2021" %in% gnaf_list_geographies(con)$name) {
+  if (DBI::dbExistsTable(con, "gnaf_sa2_2021")) {
+    # Adopt the table from the earlier demo. No spatial lookup is repeated.
+    gnaf_register_geography(
+      con, name = "sa2_2021", table = "gnaf_sa2_2021", points_crs = gnaf_crs
+    )
+  } else {
+    # Create gnaf_geo_sa2_2021 and register it in one transaction.
+    gnaf_add_geography(
+      con, name = "sa2_2021", shapes = sa2,
+      return_cols = c("sa2_code_2021", "sa2_name_2021"),
+      points_crs = gnaf_crs
+    )
+  }
+}
 
-# Confirm coverage, including rows with no SA2 assignment.
-DBI::dbGetQuery(con, "
-  SELECT count(*) AS address_rows,
-         count(sa2_code_2021) AS with_sa2,
-         count(*) - count(sa2_code_2021) AS without_sa2
-  FROM gnaf_sa2_2021
-")
+# Cheap metadata lookup: names, tables, coordinate CRS and attribute columns.
+gnaf_list_geographies(con)
 
-# Inspect the real alias/principal/primary example with its new variables.
-DBI::dbGetQuery(con, "
-  SELECT g.address_detail_pid, g.address_label,
-         s.sa2_code_2021, s.sa2_name_2021
-  FROM gnaf_addresses g
-  LEFT JOIN gnaf_sa2_2021 s USING (address_detail_pid)
-  WHERE g.address_detail_pid IN
-    ('GAQLD155672969', 'GAQLD158440593', 'GAQLD156981590')
-  ORDER BY g.address_detail_pid
-")
+# One row per attribute; denominator includes every current source address.
+gnaf_geography_coverage(con, "sa2_2021")
+# Or check every available registered geography:
+# gnaf_geography_coverage(con)
 ```
 
 The inspected database had 13,869,745 address rows and 2,403,914 distinct valid
@@ -341,52 +372,81 @@ without batching. The saved results were:
 | Valid-coordinate rows with no intersecting Queensland SA2 | 2,315 |
 | Nundah alias, principal and primary records | All map to `302031040` / `Nundah` |
 
-The table is already populated. When replaying the example, skip the
-`gnaf_add_spatial()` call and run the inspection queries, or explicitly remove
-the enrichment using the final section before rebuilding it.
+Those are historical results from the original run. The add/register block above
+adopts that table if it still exists, or rebuilds it if it has been removed.
+Use `gnaf_geography_coverage()` for current figures.
 
 All distinct points are processed together in R, so allow memory for their
 point geometries as well as their coordinates. Addresses with missing/invalid
 coordinates or no intersecting SA2 retain `NA` attributes. Overlaps use the first
 polygon in the supplied order; sorting by SA2 code makes that choice repeatable.
 
-The ingestion is transactional: a failure rolls back the new table. An existing
-`gnaf_sa2_2021` table is never silently replaced. This is a snapshot: rebuild it
+The ingestion is transactional: a failure rolls back the new table and its
+registration. Existing layers are never silently replaced. This is a snapshot: rebuild it
 after loading a new GNAF release, editing coordinates or choosing new boundaries.
 Only `gnaf_addresses` is enriched here; use `address_table = "custom_addresses"`
-and a different output table name to enrich custom records too.
+and a different geography name and attribute names to enrich custom records too.
+
+Coverage reports `non_missing`, `missing` and `coverage_pct` for each attribute.
+`stored_rows` counts current PIDs present in the saved table; `orphaned_rows`
+counts saved PIDs that no longer exist in the source. Coverage can therefore
+reveal added/deleted addresses, but it cannot detect coordinate edits on the
+same PID. Empty source tables report `NA` coverage rather than 100%.
 
 ### Include the new variables with match results
 
-`gnaf_match()` returns its standard fields. Fetch the extra variables for the
-returned PIDs and join them onto the result. Use `address_detail_pid` so the SA2
-describes the address returned by `return_principal` / `return_primary`.
+Pass the registered name in `geographies`. The join uses the final returned PID
+and source, so SA2 describes the address selected by `return_principal` /
+`return_primary`. Only needed PIDs are fetched; no manual SQL or joins are required.
 
 ```r
-results <- gnaf_match(
-  c("27 Ivo Street, Nundah QLD 4012", "10 St James Ct, Tamborine Mountain QLD 4272"),
-  con, return_principal = TRUE, return_primary = TRUE
+addresses <- c(
+  "27 Ivo Street, Nundah QLD 4012",
+  "10 St James Ct, Tamborine Mountain QLD 4272"
 )
-
-# Fetch only the enrichment rows needed for these results.
-sa2_for_matches <- local({
-  ids <- unique(results[matched == TRUE, .(address_detail_pid)])
-  duckdb::duckdb_register(con, "demo_match_ids", ids)
-  on.exit(duckdb::duckdb_unregister(con, "demo_match_ids"))
-  setDT(DBI::dbGetQuery(con, "
-    SELECT s.* FROM gnaf_sa2_2021 s
-    JOIN demo_match_ids i USING (address_detail_pid)
-  "))
-})
-
-# Keep result order, repeated matches and unmatched inputs.
-results_sa2 <- sa2_for_matches[results, on = "address_detail_pid"]
+results_sa2 <- gnaf_match(
+  addresses, con,
+  return_principal = TRUE, return_primary = TRUE,
+  geographies = "sa2_2021"
+)
 results_sa2[, .(
   input_raw, address_label, sa2_code_2021, sa2_name_2021, total_score
 )]
 
+# Include every available registered layer:
+results_all <- gnaf_match(addresses, con, geographies = TRUE)
+
+# Or name several layers after adding them:
+# gnaf_match(addresses, con, geographies = c("sa2_2021", "lga_2025"))
+
+# If you already have results, enrich them without matching again:
+results <- gnaf_match(addresses, con, return_principal = TRUE, return_primary = TRUE)
+results_with_sa2 <- gnaf_join_geographies(results, con, "sa2_2021")
+
 gnaf_disconnect(con)
 ```
+
+`geographies = NULL` (the default) adds no columns. Both entry points preserve
+result order, repeated matches, unmatched inputs, scores and ranks; missing
+assignments remain `NA`. Geography values are fetched fresh even when a match
+comes from cache. The standalone join returns a copy of the input table.
+
+Attribute names must be distinct across requested layers and existing result
+columns. If a shapefile uses generic names, rename them while adding it:
+
+```r
+# Example for a future layer with columns called CODE and NAME:
+# gnaf_add_geography(
+#   con, "lga_2025", lga_shapes,
+#   return_cols = c(lga_code_2025 = "CODE", lga_name_2025 = "NAME"),
+#   points_crs = 7844
+# )
+```
+
+Listing, coverage, matching and joins also work with read-only connections.
+If a saved table was deleted manually, the list marks it `available = FALSE`;
+requesting it by name gives a clear error. Remove its registration with the
+removal helper before rebuilding it.
 
 ### Use the spatial helper directly without saving anything
 
@@ -430,10 +490,10 @@ if (exists("con") && DBI::dbIsValid(con)) {
   gnaf_disconnect(con, shutdown = TRUE)
 }
 con <- gnaf_connect("C:/temp/gnafx23.duckdb", read_only = FALSE)
-if (DBI::dbExistsTable(con, "gnaf_sa2_2021")) {
-  DBI::dbRemoveTable(con, "gnaf_sa2_2021")
+if ("sa2_2021" %in% gnaf_list_geographies(con)$name) {
+  gnaf_remove_geography(con, "sa2_2021")
 }
-stopifnot(!DBI::dbExistsTable(con, "gnaf_sa2_2021"))
+stopifnot(!"sa2_2021" %in% gnaf_list_geographies(con)$name)
 gnaf_disconnect(con)
 
 # Optional: remove the extra columns from the in-memory result as well.

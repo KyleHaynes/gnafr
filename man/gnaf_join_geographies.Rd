@@ -7,25 +7,25 @@
 gnaf_join_geographies(results, con, geographies = TRUE)
 }
 \arguments{
-\item{results}{A data.frame or data.table containing `address_detail_pid`.
-If present, `matched` excludes unmatched rows and `source` restricts joins
+\item{results}{A data.frame or data.table containing \code{address_detail_pid}.
+If present, \code{matched} excludes unmatched rows and \code{source} restricts joins
 to the registered address source. Without these fields, PIDs alone are used.}
 
-\item{con}{Connection from [gnaf_connect()]; read-only is supported.}
+\item{con}{Connection from \code{\link[=gnaf_connect]{gnaf_connect()}}; read-only is supported.}
 
-\item{geographies}{Registered names, or `TRUE` for all available geographies.
-`NULL` or `FALSE` adds none.}
+\item{geographies}{Registered names, or \code{TRUE} for all available geographies.
+\code{NULL} or \code{FALSE} adds none.}
 }
 \value{
-A new `data.table` with attributes appended, preserving input order,
-  repeated matches, unmatched rows and original columns. The input is not
-  modified. Duplicate lookup PIDs and column-name collisions are errors.
+A new \code{data.table} with attributes appended, preserving input order,
+repeated matches, unmatched rows and original columns. The input is not
+modified. Duplicate lookup PIDs and column-name collisions are errors.
 }
 \description{
 Join saved geography attributes onto existing match results
 }
 \details{
 Only distinct matched PIDs are sent to DuckDB. Geography joins run
-  after principal/primary resolution and do not change match scores or cache
-  entries. Each join uses the final returned address PID and source.
+after principal/primary resolution and do not change match scores or cache
+entries. Each join uses the final returned address PID and source.
 }

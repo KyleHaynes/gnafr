@@ -16,9 +16,9 @@ gnaf_add_spatial(
 )
 }
 \arguments{
-\item{con}{Writable DuckDB connection from [gnaf_connect()].}
+\item{con}{Writable DuckDB connection from \code{\link[=gnaf_connect]{gnaf_connect()}}.}
 
-\item{shapes}{An `sf` polygon object with a known CRS.}
+\item{shapes}{An \code{sf} polygon object with a known CRS.}
 
 \item{output_table}{Name of the new table to create in the same database.
 Must not already exist. Remove the old enrichment table explicitly before
@@ -27,43 +27,43 @@ rebuilding it.}
 \item{return_cols}{Character vector of polygon attributes to store. Defaults
 to all non-geometry attributes. At least one column is required.}
 
-\item{address_table}{Source address table: `"gnaf_addresses"` (default) or
-`"custom_addresses"`. To enrich both, call this function separately with
+\item{address_table}{Source address table: \code{"gnaf_addresses"} (default) or
+\code{"custom_addresses"}. To enrich both, call this function separately with
 different output table names.}
 
 \item{points_crs}{CRS of the stored coordinates. Default 4326 (WGS84).
-Set this to the datum of your source data; see [spatial_lookup()].}
+Set this to the datum of your source data; see \code{\link[=spatial_lookup]{spatial_lookup()}}.}
 
-\item{verbose}{Print progress if `TRUE`.}
+\item{verbose}{Print progress if \code{TRUE}.}
 
-\item{geography}{Optional registered name for use with `gnaf_match()`.
-Default `NULL` creates an unregistered table for backwards compatibility.
-Prefer [gnaf_add_geography()] for a complete add/list/coverage/remove workflow.}
+\item{geography}{Optional registered name for use with \code{gnaf_match()}.
+Default \code{NULL} creates an unregistered table for backwards compatibility.
+Prefer \code{\link[=gnaf_add_geography]{gnaf_add_geography()}} for a complete add/list/coverage/remove workflow.}
 }
 \value{
 Invisibly, the number of address rows in the new table.
 }
 \description{
 Looks up all distinct address coordinates in one call and saves the requested
-polygon attributes in a separate table keyed by `address_detail_pid`.
+polygon attributes in a separate table keyed by \code{address_detail_pid}.
 All source addresses are retained, including addresses without valid
 coordinates or a matching polygon, whose attributes are missing.
 }
 \details{
 The output is a snapshot. Rebuild it after replacing address data,
-  changing coordinates or changing boundaries. Join it to the returned
-  `address_detail_pid` from [gnaf_match()] to respect principal/primary
-  resolution. Register the table with [gnaf_register_geography()] (or supply
-  `geography`) to request it in `gnaf_match(..., geographies = name)`.
+changing coordinates or changing boundaries. Join it to the returned
+\code{address_detail_pid} from \code{\link[=gnaf_match]{gnaf_match()}} to respect principal/primary
+resolution. Register the table with \code{\link[=gnaf_register_geography]{gnaf_register_geography()}} (or supply
+\code{geography}) to request it in \code{gnaf_match(..., geographies = name)}.
 
-  SQL deduplicates coordinates before they enter R. All distinct coordinates
-  and their polygon attributes are processed together, without batching.
-  Allow enough memory for the coordinates and their point geometries.
-  The operation is atomic:
-  a failed lookup or write rolls back the new table and temporary staging
-  tables. Existing address tables and the match cache are not modified.
-  Overlaps use the first polygon in the order supplied to `shapes`.
+SQL deduplicates coordinates before they enter R. All distinct coordinates
+and their polygon attributes are processed together, without batching.
+Allow enough memory for the coordinates and their point geometries.
+The operation is atomic:
+a failed lookup or write rolls back the new table and temporary staging
+tables. Existing address tables and the match cache are not modified.
+Overlaps use the first polygon in the order supplied to \code{shapes}.
 
-  Remove the enrichment with `DBI::dbRemoveTable(con, output_table)` when it is
-  no longer needed. This leaves the GNAF address data intact.
+Remove the enrichment with \code{DBI::dbRemoveTable(con, output_table)} when it is
+no longer needed. This leaves the GNAF address data intact.
 }

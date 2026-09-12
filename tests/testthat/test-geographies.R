@@ -62,11 +62,37 @@ test_that("existing enrichment tables can be adopted without a spatial rebuild",
   expect_no_error(gnaf_register_geography(con, "sa2", "gnaf_sa2_2021", points_crs = 4326))
   expect_identical(DBI::dbReadTable(con, "gnaf_sa2_2021"), before)
   expect_error(gnaf_register_geography(con, "other", "gnaf_sa2_2021"), "already registered")
+  expect_error(gnaf_register_geography(con, "other", "GNAF_SA2_2021"), "already registered")
   expect_error(gnaf_register_geography(con, "core", "gnaf_addresses"), "source or system")
   DBI::dbRemoveTable(con, "gnaf_sa2_2021")
   expect_false(gnaf_list_geographies(con)$available)
   expect_error(gnaf_geography_coverage(con, "sa2"), "table is missing")
   expect_no_error(gnaf_remove_geography(con, "sa2"))
+})
+
+test_that("failed registration during creation rolls back the new geography table", {
+  con <- geography_connection()
+  on.exit(gnaf_disconnect(con), add = TRUE)
+  gnaf_add_spatial(con, geography_shapes(), "gnaf_geo_new", return_cols = "code", verbose = FALSE)
+  gnaf_register_geography(con, "old", "gnaf_geo_new")
+  DBI::dbRemoveTable(con, "gnaf_geo_new")
+  tables <- DBI::dbListTables(con)
+  expect_error(gnaf_add_geography(con, "new", geography_shapes(),
+                                  return_cols = "code", verbose = FALSE), "already registered")
+  expect_setequal(DBI::dbListTables(con), tables)
+  expect_identical(gnaf_list_geographies(con)$name, "old")
+})
+
+test_that("temporary tables and views cannot be registered as persistent geographies", {
+  con <- geography_connection()
+  on.exit(gnaf_disconnect(con), add = TRUE)
+  DBI::dbExecute(con, "CREATE TEMP TABLE transient AS
+    SELECT address_detail_pid, state FROM gnaf_addresses")
+  DBI::dbExecute(con, "CREATE VIEW geo_view AS
+    SELECT address_detail_pid, state FROM gnaf_addresses")
+  expect_error(gnaf_register_geography(con, "temporary", "transient"), "persistent")
+  expect_error(gnaf_register_geography(con, "view", "geo_view"), "persistent")
+  expect_false(DBI::dbExistsTable(con, "gnaf_geographies"))
 })
 
 test_that("joins preserve order, repeated and unmatched rows, types and caller ownership", {

@@ -28,7 +28,8 @@
 #' @param alias_types Character vector of \code{alias_type} values to include
 #'   in matching. Use \code{NA} to include core GNAF rows (where
 #'   \code{alias_type} is \code{NULL}). Default \code{NULL} matches all rows
-#'   regardless of alias type. Example: \code{c(NA, "street_only")} restricts
+#'   regardless of alias type or match strength; aliases compete with core
+#'   addresses before ranking. Example: \code{c(NA, "street_only")} restricts
 #'   to core addresses and street-level aliases only.
 #' @param resolve_principal If \code{TRUE}, results that are an alias
 #'   (\code{alias_type} is not \code{NA} and \code{principal_pid} is set) get
@@ -45,13 +46,14 @@
 #' @param return_primary If \code{TRUE}, replace a secondary match's address
 #'   fields with the full primary record linked by \code{primary_pid}.
 #'   Default \code{FALSE}. When both return options are enabled, resolve the
-#'   principal first, then its primary address.
-#' @param geographies Registered geography names, e.g. `"sa2_2021"`, or `TRUE`
-#'   for all available layers. Default `NULL` adds none. Attributes are appended
+#'   principal first, then its primary address. Both options apply regardless
+#'   of match strength or \code{fallback_threshold}.
+#' @param geographies Registered geography names, e.g. \code{"sa2_2021"}, or \code{TRUE}
+#'   for all available layers. Default \code{NULL} adds none. Attributes are appended
 #'   for the final returned PID/source, after principal/primary resolution.
-#'   Missing assignments remain `NA`; match order, ranks and scores are retained.
-#'   See [gnaf_list_geographies()], [gnaf_add_geography()] and
-#'   [gnaf_join_geographies()]. Column-name collisions are errors.
+#'   Missing assignments remain \code{NA}; match order, ranks and scores are retained.
+#'   See \code{\link{gnaf_list_geographies}}, \code{\link{gnaf_add_geography}} and
+#'   \code{\link{gnaf_join_geographies}}. Column-name collisions are errors.
 #' @param locality_fallback If \code{TRUE} (default), re-searches by locality
 #'   name for unmatched inputs and results below \code{fallback_threshold}
 #'   whose locality component is weak.
@@ -88,8 +90,9 @@
 #'
 #'   The return options apply after matching, ranking and cache storage. Scores,
 #'   ranks and parsed input fields still describe the original match, recorded
-#'   in \code{matched_address_detail_pid} and \code{matched_address_label}
-#'   whenever either option is enabled. All returned address fields come from
+#'   in a complete set of \code{matched_*} address columns whenever either
+#'   option is enabled (e.g. \code{matched_address_label},
+#'   \code{matched_longitude} and \code{matched_principal_pid}). All returned address fields come from
 #'   the linked record, including missing values. Missing or unavailable links
 #'   leave the matched address unchanged. Lookups include custom addresses when
 #'   \code{include_custom = TRUE}, preferring GNAF if a PID exists in both tables.
@@ -171,9 +174,6 @@ gnaf_match <- function(addresses, con, max_results = 1L, min_score = 60L,
            "leave include_aliases at its default (TRUE).", call. = FALSE)
     alias_types <- NA_character_
   }
-
-  staged_alias_search <- is.null(alias_types)
-  primary_alias_types <- if (staged_alias_search) NA_character_ else alias_types
 
   # Cached scores were computed with the default weights; serving or storing
   # them under different weights would silently mis-score, so the cache is
@@ -330,7 +330,7 @@ gnaf_match <- function(addresses, con, max_results = 1L, min_score = 60L,
     exact_components <- if (use_separate_exact_path) {
       .match_exact_components_duckdb(
         con, has_pc, max_results, min_score, weights, include_custom,
-        verbose, primary_alias_types
+        verbose, alias_types
       )
     } else {
       .empty_path_result()
@@ -338,8 +338,8 @@ gnaf_match <- function(addresses, con, max_results = 1L, min_score = 60L,
     strong_ids <- if (!is.null(exact_components$matches) &&
                       nrow(exact_components$matches) > 0L) {
       exact_components$matches[
-        , .(best_score = max(total_score)), by = input_id
-      ][best_score > fallback_threshold, input_id]
+        , .(perfect_matches = sum(total_score == 100L)), by = input_id
+      ][perfect_matches >= max_results, input_id]
     } else {
       integer()
     }
@@ -350,7 +350,7 @@ gnaf_match <- function(addresses, con, max_results = 1L, min_score = 60L,
     }
     fuzzy_components <- .match_postcode_duckdb(
       con, fuzzy_inputs, max_results, min_score, weights, include_custom,
-      verbose, primary_alias_types
+      verbose, alias_types
     )
     pc_path <- .combine_path_results(
       exact_components, fuzzy_components, max_results
@@ -373,7 +373,7 @@ gnaf_match <- function(addresses, con, max_results = 1L, min_score = 60L,
       ))
       st_path <- .match_state_duckdb(con, no_pc_state, max_results, min_score,
                                       weights, include_custom, verbose,
-                                      primary_alias_types)
+                                      alias_types)
       results[["no_postcode"]]     <- st_path$matches
       diagnostics[["no_postcode"]] <- st_path$diagnostics
     } else {
@@ -421,117 +421,9 @@ gnaf_match <- function(addresses, con, max_results = 1L, min_score = 60L,
       ))
       loc_path <- .match_locality_duckdb(con, fallback_parse, max_results,
                                           min_score, weights, include_custom,
-                                          verbose, primary_alias_types)
+                                          verbose, alias_types)
       results[["locality"]]     <- loc_path$matches
       diagnostics[["locality"]] <- loc_path$diagnostics
-    }
-  }
-
-  # Default alias search is deliberately staged after the core table. Street
-  # and address aliases are searched only for weak street results; the much
-  # larger locality-alias set is searched only when locality agreement is weak.
-  if (staged_alias_search && nrow(match_inputs) > 0L) {
-    empty_best <- data.table(
-      input_id = integer(), total_score = integer(),
-      score_street_name = integer(), score_suburb = integer()
-    )
-    current_parts <- Filter(
-      function(x) !is.null(x) && nrow(x) > 0L,
-      results
-    )
-    current <- if (length(current_parts) > 0L) {
-      rbindlist(current_parts, fill = TRUE, use.names = TRUE)
-    } else {
-      data.table()
-    }
-    if (nrow(current) > 0L) {
-      current <- current[input_id %in% match_inputs$input_id]
-      if (nrow(current) > 0L) {
-        setorder(current, input_id, -total_score, address_detail_pid)
-        current_best <- current[, .SD[1L], by = input_id]
-      } else {
-        current_best <- copy(empty_best)
-      }
-    } else {
-      current_best <- copy(empty_best)
-    }
-    unmatched_alias_ids <- match_inputs[
-      !input_id %in% current_best$input_id, input_id
-    ]
-    # Same trigger as the locality fallback above: total_score <= fallback_threshold
-    # decides "try harder", independent of min_score (which only gates final
-    # result inclusion, after all fallback paths have run).
-    street_alias_ids <- unique(c(
-      unmatched_alias_ids,
-      current_best[
-        total_score <= fallback_threshold & score_street_name < round(weights$street_name * 0.75),
-        input_id
-      ]
-    ))
-    locality_alias_ids <- current_best[
-      total_score <= fallback_threshold & score_suburb < round(weights$suburb * 0.85),
-      unique(input_id)
-    ]
-
-    if (length(street_alias_ids) > 0L || length(locality_alias_ids) > 0L) {
-      exact_alias_types <- "__GNAFR_EXACT_ALIASES__"
-      locality_alias_types <- "__GNAFR_LOCALITY_ALIASES__"
-
-      street_inputs <- match_inputs[input_id %in% street_alias_ids]
-      if (nrow(street_inputs) > 0L && length(exact_alias_types) > 0L) {
-        exact_alias <- .match_exact_components_duckdb(
-          con, street_inputs[!is.na(in_postcode)], max_results, min_score,
-          weights, include_custom, verbose, exact_alias_types
-        )
-        exact_alias_strong <- if (!is.null(exact_alias$matches)) {
-          exact_alias$matches[
-            , .(best_score = max(total_score)), by = input_id
-          ][best_score > fallback_threshold, input_id]
-        } else {
-          integer()
-        }
-        fuzzy_alias_inputs <- street_inputs[
-          !input_id %in% exact_alias_strong & !is.na(in_postcode)
-        ]
-        fuzzy_alias <- .match_postcode_duckdb(
-          con, fuzzy_alias_inputs, max_results, min_score, weights,
-          include_custom, verbose, exact_alias_types
-        )
-        state_alias <- .match_state_duckdb(
-          con, street_inputs[is.na(in_postcode) & !is.na(in_state)],
-          max_results, min_score, weights, include_custom, verbose, exact_alias_types
-        )
-        street_alias <- .combine_path_results(
-          exact_alias, fuzzy_alias, max_results
-        )
-        street_alias <- .combine_path_results(
-          street_alias, state_alias, max_results
-        )
-        results[["street_aliases"]] <- street_alias$matches
-        diagnostics[["street_aliases"]] <- street_alias$diagnostics
-        strong_street_alias_ids <- if (!is.null(street_alias$matches)) {
-          street_alias$matches[
-            , .(best_score = max(total_score)), by = input_id
-          ][best_score > fallback_threshold, input_id]
-        } else {
-          integer()
-        }
-      } else {
-        strong_street_alias_ids <- integer()
-      }
-
-      locality_inputs <- match_inputs[
-        input_id %in% locality_alias_ids &
-          !input_id %in% strong_street_alias_ids
-      ]
-      if (nrow(locality_inputs) > 0L && length(locality_alias_types) > 0L) {
-        locality_alias <- .match_locality_aliases_duckdb(
-          con, locality_inputs, max_results, min_score, weights,
-          include_custom, verbose, locality_alias_types
-        )
-        results[["locality_aliases"]] <- locality_alias$matches
-        diagnostics[["locality_aliases"]] <- locality_alias$diagnostics
-      }
     }
   }
 
@@ -625,8 +517,12 @@ gnaf_match <- function(addresses, con, max_results = 1L, min_score = 60L,
 
   if (isTRUE(resolve_principal)) out <- .resolve_principal(con, out)
   if (return_principal || return_primary) {
-    out[, `:=`(matched_address_detail_pid = address_detail_pid,
-               matched_address_label = address_label)]
+    # Snapshot the complete candidate before following either relationship.
+    # Scores/ranks still belong to this candidate, including on cache hits.
+    address_fields <- trimws(strsplit(gsub("g\\.", "", .GNAF_SELECT_COLS),
+                                     ",", fixed = TRUE)[[1L]])
+    for (field in address_fields)
+      set(out, j = paste0("matched_", field), value = out[[field]])
     if (return_principal)
       out <- .return_linked_address(con, out, "principal_pid", include_custom)
     if (return_primary)
@@ -916,6 +812,9 @@ WHERE r.match_rank <= %d
   )
   if (nrow(matches) > 0L) {
     setorder(matches, input_id, -total_score, address_detail_pid)
+    # Exact and fuzzy paths can return the same candidate. Remove repeats
+    # before applying the limit so they cannot displace distinct alternatives.
+    matches <- unique(matches, by = c("input_id", "address_detail_pid"))
     matches <- matches[matches[, .I[seq_len(min(.N, max_results))], by = input_id]$V1]
     matches[, match_rank := seq_len(.N), by = input_id]
   } else {

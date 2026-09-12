@@ -13,24 +13,24 @@ gnaf_register_geography(
 )
 }
 \arguments{
-\item{con}{Writable connection from [gnaf_connect()].}
+\item{con}{Writable connection from \code{\link[=gnaf_connect]{gnaf_connect()}}.}
 
-\item{name}{Short geography name, e.g. `"sa2_2021"`. Names use letters,
+\item{name}{Short geography name, e.g. \code{"sa2_2021"}. Names use letters,
 digits and underscores, start with a letter, and are stored lowercase.}
 
 \item{table}{Existing enrichment table in the main database schema.}
 
-\item{address_table}{`"gnaf_addresses"` (default) or `"custom_addresses"`.}
+\item{address_table}{\code{"gnaf_addresses"} (default) or \code{"custom_addresses"}.}
 
-\item{points_crs}{Optional source coordinate CRS. Default `NA` records an
+\item{points_crs}{Optional source coordinate CRS. Default \code{NA} records an
 unknown CRS for a legacy table; use 7844 when the coordinates were GDA2020.}
 }
 \value{
 Invisibly, the registered geography name. Re-registering the same
-  name, table and source is allowed.
+name, table and source is allowed.
 }
 \description{
-Use this for tables previously created by [gnaf_add_spatial()], such as
-`gnaf_sa2_2021`. Checks that PIDs are non-missing and unique and that at least
+Use this for tables previously created by \code{\link[=gnaf_add_spatial]{gnaf_add_spatial()}}, such as
+\code{gnaf_sa2_2021}. Checks that PIDs are non-missing and unique and that at least
 one attribute exists. A table can belong to only one geography.
 }

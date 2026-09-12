@@ -38,6 +38,7 @@
 #'
 #'   Remove the enrichment with `DBI::dbRemoveTable(con, output_table)` when it is
 #'   no longer needed. This leaves the GNAF address data intact.
+#' @md
 #' @export
 gnaf_add_spatial <- function(con, shapes, output_table, return_cols = NULL,
                              address_table = c("gnaf_addresses", "custom_addresses"),

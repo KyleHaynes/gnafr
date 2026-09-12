@@ -66,10 +66,55 @@ test_that("principal returns replace all address fields for each alias kind", {
   expect_equal(out[, ..fields], target[rep(1L, length(inputs))])
   expect_identical(out$matched_address_detail_pid, original$address_detail_pid)
   expect_identical(out$matched_address_label, original$address_label)
+  for (field in fields)
+    expect_identical(out[[paste0("matched_", field)]], original[[field]], info = field)
   scores_and_input <- grep("^(in_|input_|score_|total_score|match_rank|matched$|match_status)",
                            names(original), value = TRUE)
   expect_identical(out[, ..scores_and_input], original[, ..scores_and_input])
   expect_false("matched_address_detail_pid" %in% names(original))
+})
+
+test_that("strong core candidates never suppress a better alias or its linked returns", {
+  con <- new_linked_connection()
+  on.exit(gnaf_disconnect(con), add = TRUE)
+  competitor <- linked_address_rows()[3L]
+  competitor[, `:=`(address_detail_pid = "COMPETITOR",
+                    address_label = "UNIT 2 10 ODD STREET, ST LUCIA QLD 4067",
+                    street_name = "ODD", alias_type = NA_character_,
+                    alias_principal = "PRINCIPAL", principal_pid = NA_character_)]
+  suppressMessages(gnaf_add(con, competitor))
+  input <- "Unit 2 10 Olde Street, St Lucia QLD 4067"
+  core <- gnaf_match(input, con, include_aliases = FALSE,
+                     cache = FALSE, verbose = FALSE)
+  expect_identical(core$address_detail_pid, "COMPETITOR")
+  expect_gt(core$total_score, 80L)
+  for (threshold in c(0L, 80L, 90L, 100L)) {
+    original <- gnaf_match(input, con, fallback_threshold = threshold,
+                           cache = FALSE, verbose = FALSE)
+    expect_identical(original$address_detail_pid, "ADDRESS_ALIAS")
+    expect_gt(original$total_score, core$total_score)
+    resolved <- gnaf_match(input, con, fallback_threshold = threshold,
+                           return_principal = TRUE, return_primary = TRUE,
+                           cache = FALSE, verbose = FALSE)
+    expect_identical(resolved$address_detail_pid, "PRIMARY")
+    expect_identical(resolved$matched_address_detail_pid, "ADDRESS_ALIAS")
+    expect_identical(resolved$matched_longitude, original$longitude)
+    expect_identical(resolved$total_score, original$total_score)
+  }
+})
+
+test_that("perfect alias and secondary matches resolve with fallback disabled", {
+  con <- new_linked_connection()
+  on.exit(gnaf_disconnect(con), add = TRUE)
+  inputs <- linked_address_rows()$address_label[2:5]
+  out <- gnaf_match(inputs, con, fallback_threshold = 0L,
+                    locality_fallback = FALSE, return_principal = TRUE,
+                    return_primary = TRUE, cache = FALSE, verbose = FALSE)
+  expect_identical(out$address_detail_pid, rep("PRIMARY", 4L))
+  expect_identical(out$matched_address_detail_pid,
+                   c("SECONDARY", "ADDRESS_ALIAS", "STREET_ALIAS", "LOCALITY_ALIAS"))
+  expect_true(all(out$total_score == 100L))
+  expect_identical(out$matched_address_label, inputs)
 })
 
 test_that("primary returns are optional and compose after principal returns", {

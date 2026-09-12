@@ -19,6 +19,8 @@ columns: `jarowinkler_score`, `jaccard_score` (character bigrams),
 `levenshtein_score` (1 minus edit distance over the longer string) and
 `text_similarity` (the mean of the Jaro-Winkler and Jaccard scores).
 Unmatched rows get `NA`.
+When linked addresses are returned, uses `matched_address_label` so these
+diagnostics still describe the candidate that was scored and ranked.
 }
 \details{
 These are whole-string diagnostics that complement the component scores

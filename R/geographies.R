@@ -21,6 +21,7 @@
 #'   missing; no nearest-polygon substitution is performed.
 #' @seealso [gnaf_list_geographies()], [gnaf_geography_coverage()],
 #'   [gnaf_join_geographies()], [gnaf_remove_geography()]
+#' @md
 #' @export
 gnaf_add_geography <- function(con, name, shapes, return_cols = NULL,
                                 address_table = c("gnaf_addresses", "custom_addresses"),
@@ -53,6 +54,7 @@ gnaf_add_geography <- function(con, name, shapes, return_cols = NULL,
 #'   unknown CRS for a legacy table; use 7844 when the coordinates were GDA2020.
 #' @return Invisibly, the registered geography name. Re-registering the same
 #'   name, table and source is allowed.
+#' @md
 #' @export
 gnaf_register_geography <- function(con, name, table,
                                      address_table = c("gnaf_addresses", "custom_addresses"),
@@ -66,6 +68,7 @@ gnaf_register_geography <- function(con, name, table,
 }
 
 #' List registered geographies and their available columns
+#' @md
 #' @param con Connection from [gnaf_connect()]; read-only is supported.
 #' @return A `data.table` with `name`, `table_name`, `address_table`,
 #'   `points_crs`, `created_at`, `available`, and a list column `columns`.
@@ -93,6 +96,7 @@ gnaf_list_geographies <- function(con) {
 }
 
 #' Join saved geography attributes onto existing match results
+#' @md
 #' @param results A data.frame or data.table containing `address_detail_pid`.
 #'   If present, `matched` excludes unmatched rows and `source` restricts joins
 #'   to the registered address source. Without these fields, PIDs alone are used.
@@ -115,6 +119,7 @@ gnaf_join_geographies <- function(results, con, geographies = TRUE) {
 }
 
 #' Check geography coverage against current addresses
+#' @md
 #' @inheritParams gnaf_join_geographies
 #' @return A `data.table`, one row per geography attribute, with `geography`,
 #'   `column`, `address_table`, `address_rows`, `stored_rows`, `non_missing`,
@@ -157,6 +162,7 @@ gnaf_geography_coverage <- function(con, geographies = TRUE) {
 }
 
 #' Remove a saved geography and its registration
+#' @md
 #' @param con Writable connection from [gnaf_connect()].
 #' @param name Registered geography name.
 #' @return Invisibly, the removed geography name.
@@ -215,6 +221,14 @@ gnaf_remove_geography <- function(con, name) {
 
 .register_geography <- function(con, name, table, address_table, points_crs, validate) {
   .geography_table_name(table)
+  stored <- DBI::dbGetQuery(con,
+    "SELECT table_name, table_type FROM information_schema.tables
+     WHERE table_catalog = current_database() AND table_schema = 'main'
+       AND lower(table_name) = lower(?)", params = list(table))
+  if (nrow(stored) != 1L || stored$table_type != "BASE TABLE")
+    stop("Geography must be a persistent enrichment table in the main database schema",
+         call. = FALSE)
+  table <- stored$table_name
   if (validate) .validate_geography_table(con, table)
   if (!DBI::dbExistsTable(con, address_table)) stop("Address source table is missing", call. = FALSE)
   crs <- sf::st_crs(points_crs)

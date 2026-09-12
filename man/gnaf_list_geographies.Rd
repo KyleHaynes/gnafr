@@ -7,13 +7,13 @@
 gnaf_list_geographies(con)
 }
 \arguments{
-\item{con}{Connection from [gnaf_connect()]; read-only is supported.}
+\item{con}{Connection from \code{\link[=gnaf_connect]{gnaf_connect()}}; read-only is supported.}
 }
 \value{
-A `data.table` with `name`, `table_name`, `address_table`,
-  `points_crs`, `created_at`, `available`, and a list column `columns`.
-  Listing only reads metadata; use [gnaf_geography_coverage()] for counts.
-  Missing tables remain listed with `available = FALSE`.
+A \code{data.table} with \code{name}, \code{table_name}, \code{address_table},
+\code{points_crs}, \code{created_at}, \code{available}, and a list column \code{columns}.
+Listing only reads metadata; use \code{\link[=gnaf_geography_coverage]{gnaf_geography_coverage()}} for counts.
+Missing tables remain listed with \code{available = FALSE}.
 }
 \description{
 List registered geographies and their available columns

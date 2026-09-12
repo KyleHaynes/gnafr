@@ -659,6 +659,8 @@ gnaf_app <- function(con = NULL, db_path = NULL,
 #' `levenshtein_score` (1 minus edit distance over the longer string) and
 #' `text_similarity` (the mean of the Jaro-Winkler and Jaccard scores).
 #' Unmatched rows get `NA`.
+#' When linked addresses are returned, uses `matched_address_label` so these
+#' diagnostics still describe the candidate that was scored and ranked.
 #'
 #' These are whole-string diagnostics that complement the component scores
 #' from matching, and are the extra columns shown in [gnaf_app()] and
@@ -682,8 +684,13 @@ gnaf_text_scores <- function(x) {
 
   out <- copy(x)
   input_norm <- .normalize_addr(out$input_raw)
-  match_norm <- .normalize_addr(fifelse(is.na(out$address_label), "", out$address_label))
-  matched_idx <- out$matched %in% TRUE & !is.na(out$address_label)
+  match_label <- if ("matched_address_label" %in% names(out)) {
+    out$matched_address_label
+  } else {
+    out$address_label
+  }
+  match_norm <- .normalize_addr(fifelse(is.na(match_label), "", match_label))
+  matched_idx <- out$matched %in% TRUE & !is.na(match_label)
 
   jw <- jaccard <- lev <- rep(NA_real_, nrow(out))
   if (any(matched_idx)) {
