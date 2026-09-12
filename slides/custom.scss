@@ -68,4 +68,13 @@ $presentation-heading-font-weight: 600 !default;
 
 .dim { color: #6a7686; }
 
-.reveal .mermaid-js { font-size: 0.8em; }
+/* Quarto's mermaid-init.js swaps <pre class="mermaid-js"> for <svg class="mermaid-js">
+   at load, so the cap must target the svg. Slide-box px, not vh: reveal scales
+   the whole 1360x800 box, so 480px is always 60% of the slide. preserveAspectRatio
+   defaults to "meet", so this letterboxes rather than distorts. */
+.reveal svg.mermaid-js {
+  max-height: 480px;
+  max-width: 100%;
+  display: block;
+  margin: 0 auto;
+}

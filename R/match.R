@@ -87,6 +87,11 @@
 #'   identifiers earn half credit; conflicting identifiers earn none. UNIT,
 #'   APARTMENT and FLAT are equivalent designators, as are LEVEL and FLOOR.
 #'   These scores measure agreement; they are not calibrated probabilities.
+#'   Candidate pruning uses the requested weights and minimum score: a street
+#'   comparison is discarded only if its rounded score plus an upper bound on
+#'   the other components cannot reach \code{min_score}. Postcode/state and
+#'   number/lot blocking still limit which addresses are considered. Database
+#'   query failures raise an error, including when \code{verbose = FALSE}.
 #'
 #'   The return options apply after matching, ranking and cache storage. Scores,
 #'   ranks and parsed input fields still describe the original match, recorded
@@ -405,7 +410,9 @@ gnaf_match <- function(addresses, con, max_results = 1L, min_score = 60L,
     ]
     matched_ids   <- best_by_input$input_id
     unmatched_ids <- has_pc[!input_id %in% matched_ids, input_id]
-    no_pc_loc_ids <- no_pc[!is.na(in_locality), input_id]
+    # The state path already scored every eligible address in that state.
+    # A locality-to-postcode retry can only repeat a subset of those candidates.
+    no_pc_loc_ids <- no_pc[is.na(in_state) & !is.na(in_locality), input_id]
 
     fallback_ids   <- unique(c(weak_ids, unmatched_ids, no_pc_loc_ids))
     fallback_parse <- match_inputs[
@@ -659,8 +666,8 @@ gnaf_match <- function(addresses, con, max_results = 1L, min_score = 60L,
 # Design notes:
 #   * No window-function aggregates (COUNT/MAX OVER) before the score filter -
 #     those force full materialisation of the join which kills RAM at scale.
-#   * Street-name JW pre-filter (>= 0.3) in the WHERE clause cuts the
-#     intermediate table size dramatically before scoring the remaining rows.
+#   * A score upper bound prunes impossible candidates without imposing an
+#     unrelated similarity floor on calls with custom weights or low min_score.
 #   * candidate_count is set to NA; match_status "below_min_score" vs
 #     "no_candidate" is not distinguishable, which is an acceptable trade-off.
 .run_duckdb_score_query <- function(con, inputs_tbl, gnaf_tbl, join_clause,
@@ -677,6 +684,13 @@ gnaf_match <- function(addresses, con, max_results = 1L, min_score = 60L,
     collapse = ",\n"
   )
   score_total <- paste(names(exprs), collapse = " + ")
+  # Each non-street component is at most its weight rounded upwards. This is
+  # deliberately conservative for fractional weights and missing components.
+  other_max <- sum(ceiling(unlist(weights[names(weights) != "street_name"])))
+  street_bound <- sprintf(
+    "ROUND_EVEN(%g * street_similarity, 0) + %g >= %d",
+    weights$street_name, other_max, min_score
+  )
   raw_projection <- "SELECT
     g.address_detail_pid, g.address_label,
     g.postcode, g.locality_name, g.street_name, g.street_type, g.street_suffix,
@@ -714,6 +728,13 @@ gnaf_match <- function(addresses, con, max_results = 1L, min_score = 60L,
       )),
       branch(paste(
         "i.in_lot_number IS NULL AND i.in_number_first IS NOT NULL",
+        "AND i.in_number_last IS NULL AND g.number_last IS NOT NULL",
+        "AND g.number_first < i.in_number_first",
+        "AND i.in_number_first <= g.number_last"
+      )),
+      branch(paste(
+        "i.in_lot_number IS NULL AND i.in_number_first IS NOT NULL",
+        "AND i.in_number_last IS NOT NULL",
         "AND g.number_first != i.in_number_first",
         "AND g.number_first <= COALESCE(i.in_number_last, i.in_number_first)",
         "AND i.in_number_first <= COALESCE(g.number_last, g.number_first)"
@@ -744,7 +765,7 @@ WITH raw_candidates AS (
 ),
 candidates AS (
   SELECT * FROM raw_candidates
-  WHERE in_street_name IS NULL OR street_similarity >= 0.3
+  WHERE %s
 ),
 components AS (
   SELECT address_detail_pid, input_id,
@@ -767,6 +788,7 @@ JOIN %s g ON g.address_detail_pid = r.address_detail_pid
 WHERE r.match_rank <= %d
 ",
     candidate_sql,
+    street_bound,
     sel_scores,
     score_total,
     min_score,
@@ -777,9 +799,8 @@ WHERE r.match_rank <= %d
   dt <- tryCatch(
     setDT(DBI::dbGetQuery(con, sql)),
     error = function(e) {
-      .cli_match_alert(verbose, "warning",
-        sprintf("%s query failed: %s", label, conditionMessage(e)))
-      data.table()
+      stop(sprintf("%s query failed: %s", label, conditionMessage(e)),
+           call. = FALSE)
     }
   )
   elapsed <- proc.time()[["elapsed"]] - t0
@@ -960,299 +981,6 @@ WHERE r.match_rank <= %d
   res
 }
 
-# Locality fallback: fuzzy-match suburb -> discover correct postcodes -> score.
-# The entire pipeline (locality lookup + join + scoring + ranking) runs in one
-# DuckDB query, so no cartesian product ever lands in R memory.
-.match_locality_aliases_duckdb <- function(
-    con, inputs_dt, max_results, min_score, weights, include_custom,
-    verbose = FALSE,
-    alias_types) {
-  inputs_dt <- inputs_dt[!is.na(in_locality)]
-  if (nrow(inputs_dt) == 0L) return(.empty_path_result())
-
-  locality_keys <- unique(inputs_dt[, .(input_id, in_locality, in_state)])
-  duckdb::duckdb_register(
-    con, "__gnafr_alias_loc_keys__", locality_keys, overwrite = TRUE
-  )
-  on.exit(try(
-    duckdb::duckdb_unregister(con, "__gnafr_alias_loc_keys__"), silent = TRUE
-  ))
-  loc_map <- setDT(DBI::dbGetQuery(con, "
-    WITH similarities AS (
-      SELECT i.input_id, l.locality_name AS alias_locality,
-             CASE WHEN l.locality_name = i.in_locality THEN 1.0
-                  ELSE jaro_winkler_similarity(l.locality_name, i.in_locality)
-             END AS similarity
-      FROM __gnafr_alias_loc_keys__ i
-      JOIN gnaf_locality_index l
-        ON i.in_state IS NULL OR l.state = i.in_state
-    ), ranked AS (
-      SELECT *, ROW_NUMBER() OVER (
-        PARTITION BY input_id ORDER BY similarity DESC, alias_locality
-      ) AS locality_rank
-      FROM similarities
-      WHERE similarity >= 0.85
-    )
-    SELECT DISTINCT input_id, alias_locality
-    FROM ranked
-    WHERE locality_rank <= 5
-  "))
-  if (nrow(loc_map) == 0L) return(.empty_path_result())
-
-  expanded <- inputs_dt[loc_map, on = "input_id", nomatch = 0L]
-  alias_sql <- .alias_type_sql(alias_types)
-  pre_filter <- paste(
-    .number_prefilter_sql(),
-    if (!is.null(alias_sql)) paste("AND", alias_sql) else ""
-  )
-  out <- .empty_path_result()
-
-  pc <- expanded[!is.na(in_postcode)]
-  if (nrow(pc) > 0L) {
-    duckdb::duckdb_register(
-      con, "__gnafr_alias_loc_pc__", pc, overwrite = TRUE
-    )
-    on.exit(try(
-      duckdb::duckdb_unregister(con, "__gnafr_alias_loc_pc__"), silent = TRUE
-    ), add = TRUE)
-    pc_out <- .run_duckdb_score_query(
-      con, "__gnafr_alias_loc_pc__", "gnaf_addresses",
-      paste(
-        "g.postcode = i.in_postcode",
-        "AND g.locality_name = i.alias_locality"
-      ),
-      pre_filter, weights, max_results, min_score, verbose,
-      label = "gnaf_addresses (locality aliases)"
-    )
-    out <- .combine_path_results(out, pc_out, max_results)
-    if (include_custom && .table_has_rows(con, "custom_addresses")) {
-      pc_custom <- .run_duckdb_score_query(
-        con, "__gnafr_alias_loc_pc__", "custom_addresses",
-        paste(
-          "g.postcode = i.in_postcode",
-          "AND g.locality_name = i.alias_locality"
-        ),
-        pre_filter, weights, max_results, min_score, verbose,
-        label = "custom_addresses (locality aliases)"
-      )
-      out <- .combine_path_results(out, pc_custom, max_results)
-    }
-  }
-
-  state <- expanded[is.na(in_postcode) & !is.na(in_state)]
-  if (nrow(state) > 0L) {
-    duckdb::duckdb_register(
-      con, "__gnafr_alias_loc_state__", state, overwrite = TRUE
-    )
-    on.exit(try(
-      duckdb::duckdb_unregister(con, "__gnafr_alias_loc_state__"), silent = TRUE
-    ), add = TRUE)
-    state_out <- .run_duckdb_score_query(
-      con, "__gnafr_alias_loc_state__", "gnaf_addresses",
-      paste(
-        "g.state = i.in_state",
-        "AND g.locality_name = i.alias_locality"
-      ),
-      pre_filter, weights, max_results, min_score, verbose,
-      label = "gnaf_addresses (state locality aliases)"
-    )
-    out <- .combine_path_results(out, state_out, max_results)
-    if (include_custom && .table_has_rows(con, "custom_addresses")) {
-      state_custom <- .run_duckdb_score_query(
-        con, "__gnafr_alias_loc_state__", "custom_addresses",
-        paste(
-          "g.state = i.in_state",
-          "AND g.locality_name = i.alias_locality"
-        ),
-        pre_filter, weights, max_results, min_score, verbose,
-        label = "custom_addresses (state locality aliases)"
-      )
-      out <- .combine_path_results(out, state_custom, max_results)
-    }
-  }
-  out
-}
-
-.match_locality_duckdb_legacy <- function(con, inputs_dt, max_results, min_score,
-                                   weights, include_custom, verbose = FALSE,
-                                   alias_types = NULL) {
-  if (nrow(inputs_dt) == 0L || !any(!is.na(inputs_dt$in_locality)))
-    return(.empty_path_result())
-
-  duckdb::duckdb_register(con, "__gnafr_loc_inputs__", inputs_dt, overwrite = TRUE)
-  on.exit(try(duckdb::duckdb_unregister(con, "__gnafr_loc_inputs__"), silent = TRUE))
-
-  alias_sql    <- .alias_type_sql(alias_types)
-  alias_clause <- if (!is.null(alias_sql)) paste0("\n    AND ", alias_sql) else ""
-
-  exprs <- .score_sql_exprs(
-    weights, i = "c", g = "c",
-    suburb_similarity = "c.suburb_similarity",
-    street_similarity = "c.street_similarity"
-  )
-  sel_scores <- paste(
-    mapply(function(nm, ex) sprintf("    %s AS %s", ex, nm), names(exprs), exprs),
-    collapse = ",\n"
-  )
-  score_total <- paste(names(exprs), collapse = " + ")
-  final_scores <- paste0("r.", names(exprs), collapse = ", ")
-
-  make_sql <- function(gnaf_tbl) sprintf("
-WITH unique_locs AS (
-  -- Deduplicate localities before the JW scan so the cross-product is
-  -- (unique_localities x locality_index) not (all_inputs x locality_index).
-  SELECT DISTINCT in_locality, in_state
-  FROM __gnafr_loc_inputs__
-  WHERE in_locality IS NOT NULL
-),
-loc_similarity AS (
-  SELECT ul.in_locality, ul.in_state, g.postcode, g.state,
-         CASE WHEN g.locality_name = ul.in_locality THEN 1.0
-              ELSE jaro_winkler_similarity(g.locality_name, ul.in_locality)
-         END AS locality_similarity
-  FROM gnaf_locality_index g
-  JOIN unique_locs ul
-    ON ul.in_state IS NULL OR g.state = ul.in_state
-),
-loc_candidates AS (
-  SELECT *,
-         ROW_NUMBER() OVER (
-           PARTITION BY ul.in_locality, ul.in_state
-           ORDER BY locality_similarity DESC, postcode, state
-         ) AS locality_rank
-  FROM loc_similarity ul
-  WHERE locality_similarity >= 0.85
-),
-loc_map AS (
-  SELECT DISTINCT in_locality, in_state, postcode, state
-  FROM loc_candidates
-  WHERE locality_rank <= 5
-),
-expanded AS (
-  -- Two ways to discover an alternative postcode worth trying, both gated to
-  -- this already-small fallback set (inputs whose postcode-path result was
-  -- weak, missing, or absent):
-  --   (a) fuzzy-match the parsed locality name against gnaf_locality_index -
-  --       finds the right postcode regardless of how far off the stated one is.
-  --   (b) try postcodes within +/- 3 of the stated one - catches near-miss
-  --       typos / postal-vs-delivery postcodes whose locality didn't fuzzy-match
-  --       (e.g. it was itself misspelt, or absent from the input).
-  -- Doing this only here - rather than broadening the primary postcode-path
-  -- join - keeps the hot path a cheap equi-join; this fallback only ever
-  -- touches the minority of inputs that didn't already score well.
-  SELECT i.*, loc_map.postcode AS alt_postcode
-  FROM __gnafr_loc_inputs__ i
-  JOIN loc_map
-    ON loc_map.in_locality = i.in_locality
-   AND loc_map.in_state IS NOT DISTINCT FROM i.in_state
-
-  UNION
-
-  SELECT i.*, (i.in_postcode + o.pc_offset) AS alt_postcode
-  FROM __gnafr_loc_inputs__ i
-  CROSS JOIN (VALUES (-3), (-2), (-1), (1), (2), (3)) AS o(pc_offset)
-  WHERE i.in_postcode IS NOT NULL
-),
-raw_candidates AS (
-  SELECT
-    g.address_detail_pid, g.address_label,
-    g.postcode, g.locality_name, g.street_name, g.street_type, g.street_suffix,
-    g.number_first, g.number_last, g.lot_number,
-    g.flat_type, g.flat_number, g.level_type, g.level_number,
-    i.input_id,
-    i.in_postcode, i.in_locality, i.in_street_name, i.in_street_type, i.in_street_suffix,
-    i.in_number_first, i.in_number_last, i.in_number_suffix, i.in_lot_number,
-    i.in_flat_type, i.in_flat_number, i.in_level_type, i.in_level_number,
-    CASE WHEN i.in_locality IS NOT NULL AND i.in_locality = g.locality_name
-         THEN 1.0
-         WHEN i.in_locality IS NOT NULL AND g.locality_name IS NOT NULL
-         THEN jaro_winkler_similarity(i.in_locality, g.locality_name)
-         ELSE 0 END AS suburb_similarity,
-    CASE WHEN i.in_street_name IS NOT NULL AND i.in_street_name = g.street_name
-         THEN 1.0
-         WHEN i.in_street_name IS NOT NULL AND g.street_name IS NOT NULL
-         THEN jaro_winkler_similarity(i.in_street_name, g.street_name)
-         ELSE 0 END AS street_similarity
-  FROM %s g
-  JOIN expanded i ON g.postcode = i.alt_postcode
-  WHERE %s
-    %s
-),
-candidates AS (
-  SELECT * FROM raw_candidates
-  WHERE in_street_name IS NULL OR street_similarity >= 0.3
-),
-components AS (
-  SELECT address_detail_pid, input_id,
-%s
-  FROM candidates c
-),
-scored AS (
-  SELECT *, %s AS total_score
-  FROM components
-),
-ranked AS (
-  SELECT *,
-    ROW_NUMBER() OVER (PARTITION BY input_id ORDER BY total_score DESC, address_detail_pid) AS match_rank
-  FROM scored
-  WHERE total_score >= %d
-)
-SELECT %s, r.input_id, %s, r.total_score, r.match_rank
-FROM ranked r
-JOIN %s g ON g.address_detail_pid = r.address_detail_pid
-WHERE r.match_rank <= %d
-",
-    gnaf_tbl, .number_prefilter_sql(), alias_clause,
-    sel_scores,
-    score_total,
-    min_score,
-    .GNAF_SELECT_COLS, final_scores, gnaf_tbl, max_results
-  )
-
-  t0 <- proc.time()[["elapsed"]]
-  dt <- tryCatch(
-    setDT(DBI::dbGetQuery(con, make_sql("gnaf_addresses"))),
-    error = function(e) {
-      .cli_match_alert(verbose, "warning",
-        sprintf("Locality fallback query failed: %s", conditionMessage(e)))
-      data.table()
-    }
-  )
-  elapsed <- proc.time()[["elapsed"]] - t0
-  if (verbose) .cli_match_detail(verbose, sprintf(
-    "gnaf_addresses (locality): %s row(s) in %s.",
-    cli::col_green(format(nrow(dt), big.mark = ",")),
-    cli::col_cyan(sprintf("%.2fs", elapsed))
-  ))
-
-  if (nrow(dt) == 0L) {
-    res <- .empty_path_result()
-  } else {
-    diag_dt <- dt[, .(candidate_count = NA_integer_, retained_count = .N,
-                       best_score = max(total_score)), by = input_id]
-    res <- list(matches = dt, diagnostics = diag_dt)
-  }
-
-  if (include_custom && .table_has_rows(con, "custom_addresses")) {
-    t0 <- proc.time()[["elapsed"]]
-    dt2 <- tryCatch(setDT(DBI::dbGetQuery(con, make_sql("custom_addresses"))),
-                    error = function(e) data.table())
-    elapsed2 <- proc.time()[["elapsed"]] - t0
-    if (verbose) .cli_match_detail(verbose, sprintf(
-      "custom_addresses (locality): %s row(s) in %s.",
-      cli::col_green(format(nrow(dt2), big.mark = ",")),
-      cli::col_cyan(sprintf("%.2fs", elapsed2))
-    ))
-    if (nrow(dt2) > 0L) {
-      diag2 <- dt2[, .(candidate_count = NA_integer_, retained_count = .N,
-                        best_score = max(total_score)), by = input_id]
-      res <- .combine_path_results(res, list(matches = dt2, diagnostics = diag2), max_results)
-    }
-  }
-
-  res
-}
-
 .match_locality_duckdb <- function(con, inputs_dt, max_results, min_score,
                                    weights, include_custom, verbose = FALSE,
                                    alias_types = NULL) {
@@ -1292,12 +1020,16 @@ WHERE r.match_rank <= %d
         FROM __gnafr_fuzzy_loc_inputs__ i
         JOIN gnaf_locality_index l
           ON i.in_state IS NULL OR l.state = i.in_state
+      ), postcodes AS (
+        SELECT input_id, alt_postcode, MAX(similarity) AS similarity
+        FROM similarities
+        WHERE similarity >= 0.85
+        GROUP BY input_id, alt_postcode
       ), ranked AS (
         SELECT *, ROW_NUMBER() OVER (
           PARTITION BY input_id ORDER BY similarity DESC, alt_postcode
         ) AS locality_rank
-        FROM similarities
-        WHERE similarity >= 0.85
+        FROM postcodes
       )
       SELECT DISTINCT input_id, alt_postcode
       FROM ranked
@@ -1327,22 +1059,23 @@ WHERE r.match_rank <= %d
   ), add = TRUE)
 
   alias_sql <- .alias_type_sql(alias_types)
+  split_number <- nrow(expanded) > 100L
   pre_filter <- paste(
-    .number_prefilter_sql(),
+    if (split_number) "TRUE" else .number_prefilter_sql(),
     if (!is.null(alias_sql)) paste("AND", alias_sql) else ""
   )
   res <- .run_duckdb_score_query(
     con, "__gnafr_loc_expanded__", "gnaf_addresses",
     "g.postcode = i.alt_postcode", pre_filter,
     weights, max_results, min_score, verbose,
-    label = "gnaf_addresses (locality)"
+    label = "gnaf_addresses (locality)", split_number = split_number
   )
   if (include_custom && .table_has_rows(con, "custom_addresses")) {
     custom <- .run_duckdb_score_query(
       con, "__gnafr_loc_expanded__", "custom_addresses",
       "g.postcode = i.alt_postcode", pre_filter,
       weights, max_results, min_score, verbose,
-      label = "custom_addresses (locality)"
+      label = "custom_addresses (locality)", split_number = split_number
     )
     res <- .combine_path_results(res, custom, max_results)
   }
@@ -1544,8 +1277,8 @@ WHERE r.match_rank <= %d
 # standardised text (uppercased, abbreviations expanded) matches a GNAF
 # address_label exactly. Keying on the standardised form rather than the raw
 # input means common abbreviations ("St" vs "Street") still hit this fast path
-# instead of falling through to the slow path, where alias rows (e.g.
-# ADDRESS:SYN) are excluded unless the best core candidate is weak.
+# instead of falling through to component matching. Both paths respect the
+# same alias filters; linked-address resolution happens after final ranking.
 .exact_label_match <- function(con, parsed, include_custom, alias_types = NULL,
                                 weights = .default_match_weights(),
                                 min_score = 0L) {

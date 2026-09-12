@@ -2,8 +2,8 @@
 # Match cache: fast lookup for previously-matched high-confidence addresses
 # ---------------------------------------------------------------------------
 
-# Alias candidates now compete with core records regardless of fallback threshold.
-.CACHE_ALGORITHM_VERSION <- 5L
+# Invalidate scores from older candidate-pruning and locality-ranking rules.
+.CACHE_ALGORITHM_VERSION <- 6L
 
 #' Show the current state of the match cache
 #'

@@ -38,11 +38,29 @@
 # do not store number suffixes separately. Anchor against the candidate's own
 # street spelling, including when the input street has a typo.
 .candidate_number_token_sql <- function(g = "g") {
-  sprintf(paste0(
+  fallback <- sprintf(paste0(
     "REGEXP_EXTRACT(UPPER(%s.address_label), ",
     "'(^|[ /])([0-9]+[A-Z]?(-[0-9]+[A-Z]?)?) +' || ",
     "REGEXP_ESCAPE(UPPER(TRIM(%s.street_name))) || '( |,|$)', 2)"
   ), g, g)
+  # A per-row regex containing the street name is expensive to compile for
+  # every candidate pair. Locate its first occurrence literally, then extract
+  # the preceding number with a constant pattern. Only accept a complete street
+  # token and a valid number; repeated street names in building prefixes and
+  # other unusual layouts still use the original search.
+  label <- sprintf("UPPER(%s.address_label)", g)
+  street <- sprintf("UPPER(TRIM(%s.street_name))", g)
+  position <- sprintf("STRPOS(%s, ' ' || %s)", label, street)
+  token <- sprintf(paste0(
+    "REGEXP_EXTRACT(SUBSTR(%s, 1, %s - 1), ",
+    "'(^|[ /])([0-9]+[A-Z]?(-[0-9]+[A-Z]?)?) *$', 2)"
+  ), label, position)
+  boundary <- sprintf("SUBSTR(%s, %s + 1 + LENGTH(%s), 1)",
+                      label, position, street)
+  sprintf(paste0(
+    "CASE WHEN %s > 0 AND %s IN ('', ' ', ',') AND %s != '' ",
+    "THEN %s ELSE %s END"
+  ), position, boundary, token, token, fallback)
 }
 
 .candidate_number_token <- function(pairs) {

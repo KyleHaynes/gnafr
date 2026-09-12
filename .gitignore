@@ -1,3 +1,4 @@
 /.claude/*
 *.RDS
 *.rds
+simulated_inputs.rds

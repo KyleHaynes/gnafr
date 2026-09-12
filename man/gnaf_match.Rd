@@ -149,6 +149,11 @@ Street numbers compare both range endpoints: exact intervals earn
   identifiers earn half credit; conflicting identifiers earn none. UNIT,
   APARTMENT and FLAT are equivalent designators, as are LEVEL and FLOOR.
   These scores measure agreement; they are not calibrated probabilities.
+  Candidate pruning uses the requested weights and minimum score: a street
+  comparison is discarded only if its rounded score plus an upper bound on
+  the other components cannot reach \code{min_score}. Postcode/state and
+  number/lot blocking still limit which addresses are considered. Database
+  query failures raise an error, including when \code{verbose = FALSE}.
 
   The return options apply after matching, ranking and cache storage. Scores,
   ranks and parsed input fields still describe the original match, recorded

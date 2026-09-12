@@ -17,12 +17,33 @@
 #' Flagging a row excludes its whole `input_id` (every rank for that input),
 #' which is what a false positive usually means in practice.
 #'
+#' \strong{Large results} (hundreds of thousands of rows): the app window opens
+#' immediately and shows a progress bar while [gnaf_text_scores()] computes -
+#' this is the one step whose cost scales with `nrow(x)` and previously ran
+#' silently before the window appeared. Set `text_scores = FALSE` to skip it
+#' entirely if you only need the component scores. Threshold sliders are
+#' debounced, so dragging one only recomputes once you pause. The in-scope and
+#' out-of-scope tables render an input/matched diff for up to `max_rows` rows
+#' each; that diff is the slowest part of every redraw, so a lower `max_rows`
+#' (the default) keeps every interaction responsive regardless of how large
+#' `x` is - counts and the generated filter always describe every row
+#' regardless of `max_rows`.
+#'
 #' @param x A `data.table` returned by [gnaf_match()].
 #' @param name Object name used in the generated code. Defaults to the
 #'   expression passed as `x`, and can be edited inside the app.
-#' @param max_rows Maximum rows rendered in each table. Counts and the generated
-#'   filter always use every row; only the tables are truncated, so large
-#'   batches stay responsive.
+#' @param max_rows Maximum rows rendered in each table, and the dominant cost
+#'   of every redraw (each row renders an input/matched diff). Default `200L`;
+#'   raise it if you want to browse more rows at once and don't mind slower
+#'   redraws, lower it for very large `x` on a slow machine.
+#' @param text_scores If `TRUE` (default), compute [gnaf_text_scores()] so
+#'   Jaro-Winkler/Jaccard/Levenshtein thresholds are available. This is the
+#'   one setup cost that scales with `nrow(x)`; set `FALSE` to skip it for very
+#'   large results when only the component scores are needed.
+#' @param plot_sample Maximum rows used to draw the score-distribution
+#'   histograms. Default `50000L`; sampled fresh each time thresholds change,
+#'   since the shape is unaffected by sampling at that size and it keeps the
+#'   plot responsive for large `x`.
 #' @param launch.browser Passed to [shiny::runApp()] when `run = TRUE`.
 #' @param run If `TRUE` (default), launches the app, prints the resulting code
 #'   when it closes and returns it invisibly. If `FALSE`, returns the
@@ -38,10 +59,14 @@
 #' gnaf_threshold_filter(results)
 #' # ... adjust, press Done; the console then shows e.g.
 #' # results[matched == TRUE & total_score >= 80 & score_street_name >= 30]
+#'
+#' # 500k+ rows, component scores only:
+#' gnaf_threshold_filter(results, text_scores = FALSE)
 #' }
 #' @export
 gnaf_threshold_filter <- function(x, name = deparse(substitute(x)),
-                                  max_rows = 1000L,
+                                  max_rows = 200L, text_scores = TRUE,
+                                  plot_sample = 50000L,
                                   launch.browser = interactive(), run = TRUE) {
   .gnaf_require_app_packages()
   name <- paste(name, collapse = "")
@@ -55,14 +80,20 @@ gnaf_threshold_filter <- function(x, name = deparse(substitute(x)),
          paste(missing_cols, collapse = ", "))
   }
   max_rows <- .as_positive_integer(max_rows, "max_rows")
+  plot_sample <- .as_positive_integer(plot_sample, "plot_sample")
+  if (!is.logical(text_scores) || length(text_scores) != 1L || is.na(text_scores))
+    stop("'text_scores' must be TRUE or FALSE", call. = FALSE)
 
-  data <- .gnaf_threshold_prepare(x)
-  vars <- .gnaf_threshold_vars(data)
-  maxes <- .gnaf_threshold_maxes(data, vars)
-  component_vars <- setdiff(vars, .GNAF_TEXT_VARS)
-  text_vars <- intersect(vars, .GNAF_TEXT_VARS)
+  # Cheap, structural setup only: no gnaf_text_scores() call here, so the app
+  # window can open before that per-row cost is paid. Text-score maxes are
+  # always 100 by construction, so the sliders don't need the real columns.
+  component_vars <- setdiff(.gnaf_threshold_vars(x), .GNAF_TEXT_VARS)
+  text_vars <- if (isTRUE(text_scores)) .GNAF_TEXT_VARS else character()
+  vars <- c(component_vars, text_vars)
+  maxes <- .gnaf_threshold_maxes(x, component_vars)
+  if (length(text_vars) > 0L) maxes[text_vars] <- 100L
   # If x already carries the text columns, the snippet need not recompute them.
-  wrap_text <- !all(.GNAF_TEXT_VARS %in% names(x))
+  wrap_text <- isTRUE(text_scores) && !all(.GNAF_TEXT_VARS %in% names(x))
   original_cols <- names(x)
   extra_choices <- setdiff(
     original_cols,
@@ -91,14 +122,14 @@ gnaf_threshold_filter <- function(x, name = deparse(substitute(x)),
       shiny::actionButton("reset", "Reset thresholds", class = "btn-outline-secondary btn-sm"),
       bslib::accordion(
         id = "threshold-groups",
-        open = c("components", "text"),
+        open = if (length(text_vars) > 0L) c("components", "text") else "components",
         bslib::accordion_panel(
           "Component scores",
           value = "components",
           icon = shiny::icon("scale-balanced"),
           lapply(component_vars, slider)
         ),
-        bslib::accordion_panel(
+        if (length(text_vars) > 0L) bslib::accordion_panel(
           "Text similarity",
           value = "text",
           icon = shiny::icon("text-width"),
@@ -242,12 +273,33 @@ gnaf_threshold_filter <- function(x, name = deparse(substitute(x)),
     flagged <- shiny::reactiveVal(integer())
     done <- FALSE
 
-    thresholds <- shiny::reactive({
+    # The one setup cost that scales with nrow(x). Runs after the window is
+    # already open (unlike computing it before shiny::shinyApp(), which left
+    # the console - and the browser - blank for the whole duration on large x).
+    data <- shiny::reactiveVal(NULL)
+    shiny::observe({
+      shiny::withProgress(
+        message = sprintf("Preparing %s row%s", format(nrow(x), big.mark = ","),
+                          if (nrow(x) == 1L) "" else "s"),
+        value = 0.2, {
+          if (isTRUE(text_scores)) shiny::incProgress(0.1, detail = "Computing text similarity scores")
+          prepared <- .gnaf_threshold_prepare(x, text_scores = text_scores)
+          shiny::incProgress(0.7, detail = "Ready")
+          data(prepared)
+        }
+      )
+    })
+
+    thresholds_raw <- shiny::reactive({
       stats::setNames(lapply(vars, function(var) {
         value <- input[[paste0("thr_", var)]]
         if (is.null(value)) c(0L, maxes[[var]]) else as.integer(round(value))
       }), vars)
     })
+    # Debounced so dragging a slider recomputes scope/tables/plot once you
+    # pause, not on every intermediate tick - the dominant per-interaction
+    # cost is the diff column in the two tables below.
+    thresholds <- shiny::debounce(thresholds_raw, .GNAF_THRESHOLD_DEBOUNCE_MS)
 
     obj_name <- shiny::reactive({
       value <- trimws(input$obj_name %||% "")
@@ -255,8 +307,9 @@ gnaf_threshold_filter <- function(x, name = deparse(substitute(x)),
     })
 
     scope <- shiny::reactive({
+      shiny::req(data())
       .gnaf_threshold_scope(
-        data, thresholds(), maxes,
+        data(), thresholds(), maxes,
         matched_only = isTRUE(input$matched_only),
         top_rank_only = isTRUE(input$top_rank_only),
         flagged = flagged()
@@ -280,18 +333,19 @@ gnaf_threshold_filter <- function(x, name = deparse(substitute(x)),
     })
 
     in_data <- shiny::reactive({
-      out <- data[scope()]
+      out <- data()[scope()]
       setorder(out, total_score, na.last = TRUE)
       out
     })
     out_data <- shiny::reactive({
-      out <- data[!scope()]
+      out <- data()[!scope()]
       out[, flagged := input_id %in% flagged()]
       setorder(out, -total_score, na.last = TRUE)
       out
     })
 
     result <- shiny::reactive({
+      shiny::req(data())
       keep <- scope()
       structure(
         list(
@@ -337,11 +391,15 @@ gnaf_threshold_filter <- function(x, name = deparse(substitute(x)),
     shiny::observeEvent(input$clear_flags, flagged(integer()))
 
     shiny::observeEvent(input$done, {
+      shiny::req(data())
       done <<- TRUE
       shiny::stopApp(result())
     })
     session$onSessionEnded(function() {
-      if (!done) shiny::stopApp(shiny::isolate(result()))
+      if (!done) {
+        res <- tryCatch(shiny::isolate(result()), error = function(e) NULL)
+        shiny::stopApp(res)
+      }
     })
 
     output$metrics <- shiny::renderUI({
@@ -395,7 +453,8 @@ gnaf_threshold_filter <- function(x, name = deparse(substitute(x)),
     output$code_dplyr <- shiny::renderText(.gnaf_threshold_code_text(code()$dplyr))
 
     output$score_plot <- shiny::renderPlot({
-      .gnaf_threshold_plot(data, vars, scope(), thresholds(), maxes)
+      shiny::req(data())
+      .gnaf_threshold_plot(data(), vars, scope(), thresholds(), maxes, sample_n = plot_sample)
     })
   }
 
@@ -433,6 +492,11 @@ print.gnaf_threshold_filter <- function(x, ...) {
 
 .GNAF_TEXT_VARS <- c("text_similarity", "jarowinkler_score", "jaccard_score", "levenshtein_score")
 
+# Milliseconds a threshold slider must be still before scope/tables/plot
+# recompute. The dominant per-interaction cost is the diff column rendered in
+# up to 2 * max_rows rows, so this avoids paying it on every drag tick.
+.GNAF_THRESHOLD_DEBOUNCE_MS <- 300
+
 .GNAF_THRESHOLD_LABELS <- c(
   total_score = "Total score",
   score_postcode = "Postcode",
@@ -462,7 +526,8 @@ print.gnaf_threshold_filter <- function(x, ...) {
   }), vars)
 }
 
-.gnaf_threshold_prepare <- function(x) {
+.gnaf_threshold_prepare <- function(x, text_scores = TRUE) {
+  if (!isTRUE(text_scores)) return(copy(x))
   if (nrow(x) > 0L) return(gnaf_text_scores(x))
   out <- copy(x)
   out[, (.GNAF_TEXT_VARS) := lapply(.GNAF_TEXT_VARS, function(v) numeric())]
@@ -673,7 +738,19 @@ print.gnaf_threshold_filter <- function(x, ...) {
   )
 }
 
-.gnaf_threshold_plot <- function(data, vars, keep, thresholds, maxes) {
+# Downsampling keeps the histogram responsive on large x; shape is unaffected
+# by sampling at tens of thousands of rows, and this is redrawn on every
+# (debounced) threshold change while the accordion is open.
+.gnaf_threshold_sample_rows <- function(data, keep, sample_n) {
+  if (nrow(data) <= sample_n) return(list(data = data, keep = keep))
+  idx <- sample.int(nrow(data), sample_n)
+  list(data = data[idx], keep = keep[idx])
+}
+
+.gnaf_threshold_plot <- function(data, vars, keep, thresholds, maxes, sample_n = 50000L) {
+  sampled <- .gnaf_threshold_sample_rows(data, keep, sample_n)
+  data <- sampled$data
+  keep <- sampled$keep
   plot_data <- data[, vars, with = FALSE]
   plot_data[, (vars) := lapply(.SD, as.numeric), .SDcols = vars]
   plot_data[, scope := fifelse(keep, "In scope", "Out of scope")]

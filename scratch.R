@@ -2,7 +2,6 @@ require(data.table)
 # require(gnafr)
 devtools::document()
 
-con <- gnaf_connect("C:/temp/gnaf.duckdb")
 
 ## Benchmarks
 # 100k
@@ -13,37 +12,41 @@ simulated_inputs = address_perturb_sample(
     seed = 3
 )
 saveRDS(simulated_inputs, "simulated_inputs.rds")
+simulated_inputs <- readRDS("simulated_inputs.rds")
 
+con <- gnaf_connect("C:/temp/gnafx23.duckdb")
 # simulated_inputs <- readRDS("x.rds")
 result_dt <- gnaf_match(
         c(simulated_inputs$simulated_address[200000:300000]),
         con,
         max_results = 1L,
-        min_score = 70L,
+        min_score = 80L,
         verbose = TRUE,
         cache = FALSE # Turning off to benchmark bad addresses
 )
-# Note: before this commit, 100k ran like:
-# ✔ Matched 99,036 of 100,001 input rows (99.0%).
-# Timings: parse 66.86s, standardise 1.05s, slow path 162.89s, wrangle 32.30s, total 264.25s.
-# NOW A TAD SLOWER for little gain, should we make this an argument
-# ✔ Matched 99,062 of 100,001 input rows (99.1%).
-# • Returned 99,062 candidate rows after ranking and filtering.
-# • Unmatched inputs above min_score: 939.
-# • Exact label matches: 965 in 1.78s.
-# • Cache matches: 0 in 0.00s.
-# • Slow-path matches: 98,097 in 282.48s.
-# Timings: parse 61.16s, standardise 1.03s, slow path 282.48s, wrangle 35.17s, total 381.64s.
+# ℹ Parsing 100,001 addresses.
+# ℹ Standardising parsed input addresses.
+# • Input standardisation completed in 1.28s.
+# • 0 input(s) matched via exact label lookup in 0.28s.
+# • 0 input(s) served from match cache in 0.00s.
+# ℹ Scoring 99,956 input(s) across 434 unique postcode(s) in DuckDB.
+# • gnaf_addresses (postcode): 93,293 row(s) returned in 656.54s.
+# • custom_addresses (postcode): 2 row(s) returned in 0.11s.
+# ℹ Running locality fallback for 4,721 input rows.
+# • gnaf_addresses (locality): 53 row(s) returned in 215.48s.
+# • custom_addresses (locality): 0 row(s) returned in 0.09s.
+# ℹ Wrangling final match output.
+# • Final output wrangling completed in 1.54s.
 
-# This is from the fall back commit of: 3658f17aaa6687b85034def9d9cdf4349271e9ae
-# ✔ Matched 99,063 of 100,001 input rows (99.1%).
-# • Returned 99,063 candidate rows after ranking and filtering.
-# • Unmatched inputs above min_score: 938.
-# • Exact label matches: 968 in 1.64s.
+# ── gnaf_match summary ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+# ✔ Matched 93,375 of 100,001 input rows (93.4%).
+# • Returned 93,375 candidate rows after ranking and filtering.
+# • Unmatched inputs above min_score: 6,626.
+# • Exact label matches: 0 in 0.28s.
 # • Cache matches: 0 in 0.00s.
-# • Slow-path matches: 98,095 in 288.53s.
-# Timings: parse 58.36s, standardise 1.46s, slow path 288.53s, wrangle 22.29s, total 372.34s.
-
+# • Slow-path matches: 93,375 in 876.77s.
+# • Average top-match score: 98.3.
+# Timings: parse 5.70s, standardise 1.28s, slow path 876.77s, wrangle 1.54s, total 886.12s.
 
 
 simulated_inputs[, no_match := fifelse(simulated_address %in% result_dt[(!matched)]$input_raw, T, F)]

@@ -161,6 +161,9 @@ test_that("no active conditions yields pass-through code", {
 test_that("the app validates input and its server produces printable code", {
   expect_error(gnaf_threshold_filter(data.frame(a = 1), run = FALSE), "must be a data.table")
   expect_error(gnaf_threshold_filter(data.table::data.table(a = 1), run = FALSE), "missing columns")
+  x0 <- threshold_results()
+  expect_error(gnaf_threshold_filter(x0, text_scores = NA, run = FALSE), "must be TRUE or FALSE")
+  expect_error(gnaf_threshold_filter(x0, max_rows = 0, run = FALSE), "positive")
 
   x <- threshold_results()
   app <- gnaf_threshold_filter(x, run = FALSE)
@@ -172,6 +175,12 @@ test_that("the app validates input and its server produces printable code", {
       diff_pair = "std_match", diff_granularity = "diff_chars",
       thr_total_score = c(80, 100), thr_score_street_name = c(30, 40)
     )
+    # Data prep (gnaf_text_scores) runs once, synchronously, on session start.
+    expect_false(is.null(data()))
+    # Threshold changes are debounced so a slider drag only recomputes once
+    # settled; advance the mocked clock past the debounce window to observe it.
+    session$elapse(.GNAF_THRESHOLD_DEBOUNCE_MS + 50)
+
     expect_identical(scope(), c(TRUE, FALSE, TRUE, FALSE, FALSE))
     expect_identical(nrow(in_data()), 2L)
     expect_identical(nrow(out_data()), 3L)
@@ -183,6 +192,7 @@ test_that("the app validates input and its server produces printable code", {
 
     session$setInputs(thr_total_score = c(0, 100), thr_score_street_name = c(0, 40),
                       thr_levenshtein_score = c(90, 100))
+    session$elapse(.GNAF_THRESHOLD_DEBOUNCE_MS + 50)
     expect_identical(
       code()$data.table[["in_scope"]],
       "gnaf_text_scores(x)[matched == TRUE & levenshtein_score >= 90]"
@@ -194,6 +204,7 @@ test_that("the app validates input and its server produces printable code", {
     ))
 
     session$setInputs(thr_levenshtein_score = c(0, 100))
+    session$elapse(.GNAF_THRESHOLD_DEBOUNCE_MS + 50)
     flagged(3L)
     expect_identical(scope(), c(TRUE, TRUE, FALSE, FALSE, FALSE))
     expect_identical(out_data()[flagged == TRUE, unique(input_id)], 3L)
@@ -210,6 +221,21 @@ test_that("the app validates input and its server produces printable code", {
   })
 })
 
+test_that("text_scores = FALSE skips gnaf_text_scores() and drops text vars/sliders", {
+  x <- threshold_results()
+  app <- gnaf_threshold_filter(x, text_scores = FALSE, run = FALSE)
+  expect_s3_class(app, "shiny.appobj")
+
+  shiny::testServer(app, {
+    session$setInputs(thr_total_score = c(80, 100))
+    session$elapse(.GNAF_THRESHOLD_DEBOUNCE_MS + 50)
+    expect_false(is.null(data()))
+    expect_false("jarowinkler_score" %in% names(data()))
+    expect_identical(names(data()), names(x))
+    expect_identical(scope(), x$total_score %in% 80:100 & x$matched)
+  })
+})
+
 test_that("score colouring scales to each component's maximum, not 100", {
   full_total <- .gnaf_score_col("Total", digits = 0, max = 100)$style(100)
   full_type <- .gnaf_score_col("Street type", digits = 0, max = 10)$style(10)
@@ -222,6 +248,22 @@ test_that("score colouring scales to each component's maximum, not 100", {
   expect_identical(half_name$color, "#102a43")
   expect_identical(.gnaf_score_col("x", max = 0)$style(70)$background, .gnaf_score_fill(70))
   expect_identical(.gnaf_score_col("x")$style(NA_real_)$background, "#f3f4f6")
+})
+
+test_that("large results are downsampled for the histogram, not the tables/counts", {
+  expect_identical(formals(gnaf_threshold_filter)$max_rows, 200L)
+
+  big <- data.table::data.table(total_score = 1:2000)
+  keep <- rep(c(TRUE, FALSE), 1000)
+  untouched <- .gnaf_threshold_sample_rows(big, keep, sample_n = 5000L)
+  expect_identical(untouched$data, big)
+  expect_identical(untouched$keep, keep)
+
+  set.seed(1)
+  sampled <- .gnaf_threshold_sample_rows(big, keep, sample_n = 100L)
+  expect_identical(nrow(sampled$data), 100L)
+  expect_identical(length(sampled$keep), 100L)
+  expect_true(all(sampled$data$total_score %in% big$total_score))
 })
 
 test_that("tables and plot render for the prepared data", {

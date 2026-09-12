@@ -104,6 +104,12 @@ Key arguments:
 | `geographies` | `NULL` | Append saved geography attributes by registered name, or use `TRUE` for all available layers. |
 | `weights` | defaults | Named list of score weights summing to 100. |
 
+Matching details and review findings are in [MATCHING_REVIEW.md](MATCHING_REVIEW.md).
+Scores measure component agreement, rather than a probability of correctness.
+Use `max_results > 1` to inspect alternatives. Principal/primary options follow
+stored PID relationships after ranking and preserve the original address in
+`matched_*` columns; they do not depend on the fallback threshold.
+
 ### Saved geographies
 
 Register an existing enrichment table once, then request it directly in matches:
@@ -152,6 +158,15 @@ gnaf_threshold_filter(results)
 The text similarity columns come from `gnaf_text_scores()`; when a threshold on
 one of them is active the printed code wraps the result in that call
 (`gnaf_text_scores(results)[... & jarowinkler_score >= 85]`) so it runs as-is.
+
+For large results (hundreds of thousands of rows), the window opens immediately
+and a progress bar shows while `gnaf_text_scores()` runs in the background,
+threshold sliders are debounced so dragging one only recomputes once you pause,
+and the score-distribution histogram is drawn from a sample. Pass
+`text_scores = FALSE` to skip the text-score computation entirely if you only
+need the component scores, and lower `max_rows` (default `200`, applies to the
+two tables only - counts and the generated filter always cover every row) for
+snappier redraws on a slow machine.
 
 ---
 

@@ -296,7 +296,7 @@ not calibrated probabilities: even a high total can contain a unit conflict.
 Use component scores and labelled examples to set acceptance criteria.
 
 The six public weights and score columns remain unchanged. Locality and alias
-fallback cutoffs scale with custom weights, and cache algorithm version 4 ignores
+fallback cutoffs scale with custom weights, and cache algorithm version 6 ignores
 scores computed by older versions.
 
 ## Matching paths {#sec-matching-paths}
@@ -305,8 +305,9 @@ scores computed by older versions.
 
 ### 1. Exact label match
 
-If the uppercased, trimmed input string equals a G-NAF `address_label` exactly, it's
-scored and returned immediately — no parsing-driven join needed. Built for
+If the standardised input string equals a G-NAF `address_label` exactly, it is
+scored. Further candidate search is skipped only when enough score-100 results
+fill `max_results` — no parsing-driven join needed. Built for
 re-processing addresses gnafr (or G-NAF itself) already standardised. Implemented as
 a hash join against a registered temporary table rather than a giant SQL `IN (...)`
 list, which keeps it fast even for tens of thousands of inputs.
@@ -325,9 +326,10 @@ non-default weights bypass it entirely for that call (see [Scoring](#sec-scoring
 
 The hot path for the overwhelming majority of inputs: an equi-join on
 `g.postcode = i.in_postcode` against the full address table, restricted by the
-number pre-filter and a coarse `jaro_winkler_similarity(street_name) >= 0.3` cutoff
-*before* scoring — both exist purely to keep the intermediate joined table small,
-since the actual scoring formula runs over whatever survives this filter. This is
+number pre-filter and a score upper bound before full component scoring. The
+rounded street score plus the maximum possible contribution from the other
+components must reach `min_score`. There is no fixed street-similarity floor:
+zero street weight really means street agreement contributes nothing. This remains
 deliberately a cheap, exact equi-join: near-miss postcodes are not retrieved here at
 all (see the callout above) — that's the locality fallback's job.
 
@@ -340,20 +342,18 @@ to block on.
 
 ### 5. Locality fallback
 
-Fires for any input whose best score so far is at or below `fallback_threshold`
-(default 90) — including inputs with *no* result yet — provided a locality
-(suburb) name was parsed. It discovers alternative postcodes to retry two ways,
-unioned together:
+For postcode-bearing inputs, this runs when no candidate survives or the best
+postcode candidate is at or below `fallback_threshold` **and** has a weak locality
+component (less than 85% of its weight, rounded). It also handles inputs with a
+locality but neither postcode nor state. An already completed state search is not
+repeated through locality fallback.
 
-- **Fuzzy locality match**: `jaro_winkler_similarity(g.locality_name, parsed_locality) >= 0.85` against `gnaf_locality_index` (a deduplicated `(locality_name, postcode, state)` table, ~3,000 rows for a single state — small enough to scan cheaply). This finds the right postcode regardless of *how* wrong the stated one was.
-- **Postcode offset**: the stated postcode ± 1, 2, or 3. Catches near-miss typos whose locality didn't fuzzy-match (itself misspelt, or simply absent from the input).
-
-Why 90 and not, say, 99? A clean correct match typically scores 95+. A
-**coincidental** match — same postcode and house number, completely unrelated street
-— can still reach the low-to-mid 80s (20 postcode + partial suburb/street credit + a
-lucky number match). 90 leaves enough margin to catch those coincidences and let the
-locality scan find the real candidate, without re-triggering on matches that are
-already correct.
+Exact locality names discover postcodes first. For noisy names, similarities of
+at least 0.85 qualify; the five best **distinct postcodes** are retained, ranked by
+their best locality similarity. Several aliases for one postcode occupy one slot.
+Explicit state limits the locality index search. Postcode offsets of ?1, ?2 and
+?3 are used only when no locality-derived postcode was found, and the original
+postcode is excluded because it was already searched.
 
 ```{r}
 gnaf_add(con, data.table::data.table(
@@ -376,8 +376,7 @@ For inputs still unmatched after every other path. Matches only against
 from G-NAF by [`gnaf_build_street_aliases()`](05-function-reference.qmd#gnaf_build_street_aliases)
 (or the official PSV alias tables via
 [`gnaf_load_psv()`](05-function-reference.qmd#gnaf_load_psv)). Numbered inputs never
-match these rows through the ordinary paths above — the number pre-filter requires
-`number_first IS NULL` on the candidate side to match a number-bearing input, and
+match these rows through the ordinary paths above — the number pre-filter requires a matching number or overlapping range, and
 street-only rows have no number — so this path exists specifically to give those
 inputs *something* once everything number-aware has failed. Typical cause: a brand
 new subdivision whose house numbers G-NAF hasn't published yet, or an input that
@@ -399,10 +398,11 @@ of this:
   like `COUNT(*) OVER (...)` before filtering on `total_score` would force DuckDB to
   fully materialise the join first, which is exactly the memory blow-up bulk matching
   is built to avoid.
-- **The street-name similarity pre-filter (`>= 0.3`) runs in the `WHERE` clause**,
-  before scoring — it exists purely to shrink the candidate set, since a 0.3
-  Jaro-Winkler floor is cheap to compute and eliminates the bulk of irrelevant rows
-  before the (more expensive, in aggregate) full scoring expression runs over them.
+- **A conservative score upper bound precedes full scoring.** Pruning respects
+  `weights` and `min_score`, including fractional and zero weights. Number and
+  geographic blocking still restrict candidate retrieval.
+- **Query failures are errors.** A missing table or failed SQL query must not look
+  like an ordinary unmatched address just because `verbose = FALSE`.
 - **Registered temp tables, not literal `IN (...)` lists**, for the exact-label and
   cache lookups — `duckdb_register()` lets DuckDB hash-join against an R
   `data.table` directly, which scales far better than a 50,000-item SQL literal.

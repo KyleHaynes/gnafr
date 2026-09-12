@@ -7,7 +7,9 @@
 gnaf_threshold_filter(
   x,
   name = deparse(substitute(x)),
-  max_rows = 1000L,
+  max_rows = 200L,
+  text_scores = TRUE,
+  plot_sample = 50000L,
   launch.browser = interactive(),
   run = TRUE
 )
@@ -18,9 +20,20 @@ gnaf_threshold_filter(
 \item{name}{Object name used in the generated code. Defaults to the
 expression passed as `x`, and can be edited inside the app.}
 
-\item{max_rows}{Maximum rows rendered in each table. Counts and the generated
-filter always use every row; only the tables are truncated, so large
-batches stay responsive.}
+\item{max_rows}{Maximum rows rendered in each table, and the dominant cost
+of every redraw (each row renders an input/matched diff). Default `200L`;
+raise it if you want to browse more rows at once and don't mind slower
+redraws, lower it for very large `x` on a slow machine.}
+
+\item{text_scores}{If `TRUE` (default), compute [gnaf_text_scores()] so
+Jaro-Winkler/Jaccard/Levenshtein thresholds are available. This is the
+one setup cost that scales with `nrow(x)`; set `FALSE` to skip it for very
+large results when only the component scores are needed.}
+
+\item{plot_sample}{Maximum rows used to draw the score-distribution
+histograms. Default `50000L`; sampled fresh each time thresholds change,
+since the shape is unaffected by sampling at that size and it keeps the
+plot responsive for large `x`.}
 
 \item{launch.browser}{Passed to [shiny::runApp()] when `run = TRUE`.}
 
@@ -53,6 +66,18 @@ snippet runs as printed.
 
 Flagging a row excludes its whole `input_id` (every rank for that input),
 which is what a false positive usually means in practice.
+
+\strong{Large results} (hundreds of thousands of rows): the app window opens
+immediately and shows a progress bar while [gnaf_text_scores()] computes -
+this is the one step whose cost scales with `nrow(x)` and previously ran
+silently before the window appeared. Set `text_scores = FALSE` to skip it
+entirely if you only need the component scores. Threshold sliders are
+debounced, so dragging one only recomputes once you pause. The in-scope and
+out-of-scope tables render an input/matched diff for up to `max_rows` rows
+each; that diff is the slowest part of every redraw, so a lower `max_rows`
+(the default) keeps every interaction responsive regardless of how large
+`x` is - counts and the generated filter always describe every row
+regardless of `max_rows`.
 }
 \examples{
 \dontrun{
@@ -60,5 +85,8 @@ results <- gnaf_match(addresses, con)
 gnaf_threshold_filter(results)
 # ... adjust, press Done; the console then shows e.g.
 # results[matched == TRUE & total_score >= 80 & score_street_name >= 30]
+
+# 500k+ rows, component scores only:
+gnaf_threshold_filter(results, text_scores = FALSE)
 }
 }

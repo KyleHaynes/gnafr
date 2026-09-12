@@ -3,6 +3,9 @@
 A growing set of examples for the presentation. Start with the small demo below
 to show exactly how an alias, a non-alias address and a primary address relate.
 
+See [MATCHING_REVIEW.md](MATCHING_REVIEW.md) for the matching pipeline, recent
+improvements, evaluation instructions and known limitations.
+
 ## Demo: alias to non-alias to primary
 
 These are synthetic records for demonstrating the options, not real GNAF data.

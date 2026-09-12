@@ -3,7 +3,7 @@
 devtools::load_all(".", quiet = TRUE)
 library(data.table)
 
-db_path <- "C:\\temp\\gnafx.duckdb"
+db_path <- Sys.getenv("GNAFR_BENCH_DB", "")
 if (!nzchar(db_path)) {
   message("GNAFR_BENCH_DB is not set; skipping the database benchmark.")
   quit(save = "no", status = 0L)
@@ -12,6 +12,8 @@ if (!nzchar(db_path)) {
 run_benchmark <- function() {
 n <- as.integer(Sys.getenv("GNAFR_MATCH_BENCH_N", "100000"))
 seed <- as.integer(Sys.getenv("GNAFR_MATCH_BENCH_SEED", "42"))
+if (is.na(n) || n < 1L) stop("GNAFR_MATCH_BENCH_N must be a positive integer")
+if (is.na(seed) || seed < 0L) stop("GNAFR_MATCH_BENCH_SEED must be a non-negative integer")
 con <- gnaf_connect(db_path, read_only = TRUE)
 on.exit(gnaf_disconnect(con), add = TRUE)
 
@@ -24,6 +26,7 @@ sample_sql <- sprintf(
   ), n, seed
 )
 source_rows <- as.data.table(DBI::dbGetQuery(con, sample_sql))
+if (nrow(source_rows) == 0L) stop("No core address labels available to benchmark")
 inputs <- address_perturb_sample(
   source_rows, n = min(n, nrow(source_rows)), seed = seed, max_changes = 2L
 )
@@ -53,6 +56,21 @@ summary <- data.table(
   ) / nrow(inputs)
 )
 print(summary)
+
+# Include unmatched inputs in every denominator. A high match rate alone can
+# hide wrong matches; compare against the known source PID as well.
+outcomes <- data.table(
+  input_id = seq_len(nrow(inputs)), perturbations = inputs$perturbations,
+  matched = FALSE, correct_pid = FALSE, correct_principal = FALSE
+)
+outcomes[top$input_id, `:=`(
+  matched = TRUE,
+  correct_pid = top$address_detail_pid == inputs$address_detail_pid[top$input_id],
+  correct_principal = resolved_pid == inputs$address_detail_pid[top$input_id]
+)]
+print(outcomes[, .(inputs = .N, matched_rate = mean(matched),
+                   exact_pid_rate = mean(correct_pid),
+                   resolved_pid_rate = mean(correct_principal)), by = perturbations])
 
 if (identical(Sys.getenv("GNAFR_EXPLAIN"), "1") && nrow(inputs) > 0L) {
   probe <- address_parse(inputs$simulated_address[[1L]], normalize = FALSE)
