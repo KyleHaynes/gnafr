@@ -1,5 +1,32 @@
 library(data.table)
 
+test_that("building prefixes preserve implicit unit and street numbers", {
+  before <- c("MY BUILDING NAME 3 24 ILLAWONG", "3 24 ILLAWONG",
+    "MY BUILDING NAME 3A 24B ILLAWONG", "MY BUILDING NAME 3 24-26 ILLAWONG",
+    "BLOCK 7 3 24 ILLAWONG", "MY BUILDING NAME FLAT 3 24 ILLAWONG",
+    "MY BUILDING NAME 24 ILLAWONG")
+  resources <- gnafr:::.get_parser_resources()
+  for (separator in c(", ", " ")) {
+    x <- paste0(before, " STREET", separator, "CANNONVALE QLD 4802")
+    p <- address_parse(x, normalize = FALSE)
+    expect_equal(p$in_flat_number, c("3", "3", "3A", "3", "3", "3", NA_character_))
+    expect_equal(p$in_number_first, rep(24L, length(x)))
+    expect_equal(p$in_number_last, c(rep(NA_integer_, 3L), 26L, rep(NA_integer_, 3L)))
+    expect_equal(p$in_number_suffix, c(NA_character_, NA_character_, "B", rep(NA_character_, 4L)))
+    expect_equal(p$in_street_name, rep("ILLAWONG", length(x)))
+    expect_equal(p$in_building_name, c("MY BUILDING NAME", NA_character_,
+      "MY BUILDING NAME", "MY BUILDING NAME", "BLOCK 7", "MY BUILDING NAME", "MY BUILDING NAME"))
+    expect_identical(p$input_raw, x)
+    for (j in seq_along(before)) {
+      scalar <- gnafr:::.parse_before(before[j], resources$ft_re,
+        resources$ft_map, resources$ft_alt)
+      for (field in names(scalar)) {
+        expect_equal(p[[paste0("in_", field)]][j], scalar[[field]], info = paste(j, field))
+      }
+    }
+  }
+})
+
 test_that("misspelled dwelling markers retain unit and street-number identity", {
   markers <- c("UNIT", "UNI", "UNTI", "UNITS", "UN", "FLTA", "APARTMNT", "SUIET")
   x <- paste(markers, "3 24 ILLAWONG STREET, CANNONVALE QLD 4802")

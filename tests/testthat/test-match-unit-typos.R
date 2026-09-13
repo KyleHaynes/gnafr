@@ -15,7 +15,8 @@ test_that("Illawong unit typo never redirects to street number three", {
     locality_name = "CANNONVALE", state = "QLD", postcode = 4802L
   )
   suppressMessages(gnaf_add(con, rows))
-  inputs <- paste(c("UNIT", "UNI", "UNTI", "UNITS", "FLTA", "APARTMNT"),
+  inputs <- paste(c("UNIT", "UNI", "UNTI", "UNITS", "FLTA", "APARTMNT",
+    "MY BUILDING NAME", "BLOCK 7", "UNRECOGNISED PREFIX", ""),
     "3 24 ILLAWONG STREET, CANNONVALE QLD 4802")
   for (cache in c(FALSE, TRUE, TRUE)) {
     out <- gnaf_match(inputs, con, cache = cache, verbose = FALSE)
@@ -23,8 +24,14 @@ test_that("Illawong unit typo never redirects to street number three", {
     expect_equal(out$input_raw, inputs)
     expect_true(all(out$matched))
   }
+  # Exercise geographic fallback as well as the usual postcode path.
+  fallback <- gnaf_match(c(
+    "MY BUILDING NAME 3 24 ILLAWONG STREET, CANNONVALE QLD",
+    "MY BUILDING NAME 3 24 ILLAWONG STREET, CANNONVALE QLD 4803"
+  ), con, cache = FALSE, verbose = FALSE, min_score = 80L)
+  expect_equal(fallback$address_detail_pid, rep("Z-CORRECT", 2L))
   # Exercise fuzzy scoring and the larger-batch query, without exact-label hits.
-  batch <- paste0("UNI 3 24 ILLAWON STREET, CANNONVALE QLD 4802", strrep(" ", 0:105))
+  batch <- paste0("MY BUILDING NAME 3 24 ILLAWON STREET, CANNONVALE QLD 4802", strrep(" ", 0:105))
   parsed <- address_parse(batch)
   parsed[, input_standardised := gnafr:::.standardise_input(parsed)]
   result <- gnafr:::.match_postcode_duckdb(con, parsed, 1L, 80L,

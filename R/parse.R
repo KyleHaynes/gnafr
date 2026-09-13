@@ -783,6 +783,23 @@ address_parse <- function(addresses, normalize = TRUE) {
   }
   cand <- cand[!hit]
 
+  # A building prefix does not change the meaning of the trailing numeric
+  # pair. Use the same structural rule as the scalar parser before the plain
+  # building path can misclassify the first number as the street number.
+  implied <- .parse_implied_pairs(bst[cand], ft_map, ft_alt)
+  if (nrow(implied) > 0L) {
+    idx <- cand[implied$row]
+    in_building_name[idx] <- implied$building_name
+    in_flat_type[idx] <- implied$flat_type
+    in_flat_number[idx] <- implied$flat_number
+    in_number_first[idx] <- implied$number_first
+    in_number_last[idx] <- implied$number_last
+    in_number_suffix[idx] <- implied$number_suffix
+    in_street_name[idx] <- implied$street_name
+    fast[idx] <- TRUE
+    cand <- cand[!cand %in% idx]
+  }
+
   # Plain building/site prefix followed by the street number. This was one of
   # the largest row-wise fallback groups in canonical G-NAF labels.
   building_m <- stringi::stri_match_first_regex(
@@ -1117,6 +1134,30 @@ address_parse <- function(addresses, normalize = TRUE) {
   )
 }
 
+.parse_implied_pairs <- function(text, ft_map, ft_alt) {
+  # Choose the rightmost pair so digits in a building name remain in that
+  # name. The final street-name section must start with a nonnumeric token.
+  pattern <- "^(.*)\\b(\\d+[A-Z]?)\\s+(\\d+[A-Z]?(?:-\\d+[A-Z]?)?)\\s+(\\D.*)$"
+  parts <- stringi::stri_match_first_regex(text, pattern)
+  rows <- which(!is.na(parts[, 1L]))
+  if (length(rows) == 0L) return(data.table(row = integer()))
+  parts <- parts[rows, , drop = FALSE]
+  prefix <- trimws(parts[, 2L])
+  marker <- stringi::stri_match_first_regex(
+    prefix, paste0("^(.*?)\\b(", ft_alt, ")\\s*$")
+  )
+  explicit <- !is.na(marker[, 1L])
+  type <- rep("UNIT", length(rows))
+  type[explicit] <- unname(ft_map[marker[explicit, 3L]])
+  prefix[explicit] <- trimws(marker[explicit, 2L])
+  number <- .split_number_vec(parts[, 4L])
+  data.table(row = rows,
+    building_name = fifelse(nzchar(prefix), prefix, NA_character_),
+    flat_type = type, flat_number = parts[, 3L],
+    number_first = number$first, number_last = number$last,
+    number_suffix = number$suffix, street_name = trimws(parts[, 5L]))
+}
+
 .parse_before <- function(s, ft_re, ft_map, ft_alt,
                           level_map = .get_level_type_map(),
                           level_alt = paste(names(level_map), collapse = "|")) {
@@ -1199,25 +1240,9 @@ address_parse <- function(addresses, normalize = TRUE) {
   # supplies in_flat_type and is excluded from the building name — this also
   # lets noisy prefixes like "U10 BLAH UNIT 6019 6 Parkland Bvd" resolve to the
   # trailing "6019 6 Parkland" pair instead of the leading "U10".
-  pair_re <- "^(.*)\\b(\\d+[A-Z]?)\\s+(\\d+[A-Z]?(?:-\\d+[A-Z]?)?)\\s+(\\D.*)$"
-  pair_m  <- regmatches(s, regexec(pair_re, s, perl = TRUE))[[1L]]
-  if (length(pair_m) == 5L) {
-    prefix  <- pair_m[[2L]]
-    num1    <- pair_m[[3L]]
-    num2    <- pair_m[[4L]]
-    st_name <- trimws(pair_m[[5L]])
-
-    ftm <- regmatches(prefix, regexec(paste0("^(.*?)\\b(", ft_alt, ")\\s*$"), prefix, perl = TRUE))[[1L]]
-    if (length(ftm) == 3L) {
-      out$flat_type     <- unname(ft_map[[ftm[[3L]]]])
-      out$building_name <- if (nzchar(trimws(ftm[[2L]]))) trimws(ftm[[2L]]) else NA_character_
-    } else {
-      out$flat_type     <- "UNIT"
-      out$building_name <- if (nzchar(trimws(prefix))) trimws(prefix) else NA_character_
-    }
-    out$flat_number <- num1
-    out <- .apply_parsed_number(out, num2)
-    out$street_name <- if (nzchar(st_name)) st_name else NA_character_
+  pair <- .parse_implied_pairs(s, ft_map, ft_alt)
+  if (nrow(pair) > 0L) {
+    for (field in setdiff(names(pair), "row")) out[[field]] <- pair[[field]][[1L]]
     return(out)
   }
 

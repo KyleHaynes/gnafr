@@ -201,7 +201,12 @@ small difference into exact agreement. Missing or empty names receive zero.
 
 For example, `24 ILLAWONG` must not receive the same street-name credit as
 `ILLAWONG`. The former can arise when a unit marker is misspelled and a unit
-number is mistaken for a street number. The parser also recovers unambiguous
+number is mistaken for a street number. A unit marker is not required:
+`MY BUILDING NAME 3 24 ILLAWONG STREET` is parsed as building name
+`MY BUILDING NAME`, unit `3`, street number `24`, and street `ILLAWONG`.
+The vectorised and scalar parsers share this trailing-number-pair rule.
+Street-number candidate filtering therefore uses `24`, not the unit number.
+The parser also recovers unambiguous
 one-edit or adjacent-transposition variants of `UNIT`, `FLAT`, `APARTMENT`,
 and `SUITE` when followed by a unit number, a street number, and a street name.
 It preserves the original text in `input_raw`. A corrected marker can still

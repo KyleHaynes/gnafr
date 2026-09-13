@@ -22,6 +22,9 @@ audit_match_identity <- function(
   previous_rules <- function() {
     # Reconstruct the pre-fix marker handling and name-credit formula, holding
     # database, candidate retrieval, weights and every other rule constant.
+    # Both runs use the current shared implicit-number-pair parser, including
+    # building prefixes. This isolates marker/name scoring rather than
+    # reconstructing an entire historical parser release.
     testthat::local_mocked_bindings(
       .repair_flat_markers = function(x, ft_map) x,
       .COMPONENT_SIM_HIGH = 0.85,

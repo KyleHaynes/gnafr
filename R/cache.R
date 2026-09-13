@@ -9,7 +9,9 @@
 # cached scores no longer reflect the current formula.
 # v8: repair contextual dwelling-marker typos and reserve full name credit
 # for exact agreement. Old matches and scores must be recomputed.
-.CACHE_ALGORITHM_VERSION <- 8L
+# v9: building-prefixed implicit unit/street-number pairs use the same rule
+# in vectorized and scalar parsing; previous wrong-house matches are stale.
+.CACHE_ALGORITHM_VERSION <- 9L
 
 #' Show the current state of the match cache
 #'

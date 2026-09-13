@@ -1,5 +1,32 @@
 # Matching identity review
 
+## Follow-up: building names without a unit marker
+
+The initial marker-spelling fix did not cover arbitrary building prefixes.
+`MY BUILDING NAME 3 24 ILLAWONG STREET` exposed a disagreement between parser
+paths: the scalar fallback recognised the implicit unit/street-number pair,
+but the vectorised building-name path intercepted it and selected `3` as
+the street number.
+
+Both paths now share the same trailing-number-pair parser. The example yields
+building `MY BUILDING NAME`, unit `3`, street number `24`, and street name
+`ILLAWONG`. No known building name or unit keyword is required. Number-based
+candidate filtering then uses street number 24. The default scoring weights
+are unchanged: increasing the number weight would amplify the wrong number
+if parsing still assigned it incorrectly.
+
+The cache algorithm version is now 9. Added regressions cover arbitrary and
+numeric building prefixes, alpha suffixes, street ranges, comma/no-comma
+formats, scalar/vector agreement, competing units and street numbers, cache
+use, postcode and geographic fallback, and large batches. The benchmark figures
+below describe the earlier marker/scoring revision, before this follow-up.
+
+Follow-up validation: 986 assertions passed across the full suite, with no
+failures or skips and one installed-package warning. The supplied example
+selects the intended unit in competing-address fixtures. The full reference
+database was locked by Rterm during this follow-up, so that additional live
+database check could not be completed.
+
 ## Reported failure
 
 `UNIT 3 24 ILLAWONG STREET, CANNONVALE QLD 4802` identified the unit,
