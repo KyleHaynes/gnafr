@@ -122,6 +122,7 @@ gnaf_match <- function(addresses, con, max_results = 1L, min_score = 60L,
                        alias_types = NULL,
                        resolve_principal = FALSE,
                        locality_fallback = TRUE,
+                       street_number_fallback = TRUE,
                        street_only_fallback = FALSE,
                        fallback_threshold = 90L,
                        weights = .default_match_weights(),
@@ -163,7 +164,8 @@ gnaf_match <- function(addresses, con, max_results = 1L, min_score = 60L,
   }
   for (arg in c("include_custom", "include_aliases", "resolve_principal",
                 "return_principal", "return_primary",
-                "locality_fallback", "street_only_fallback", "normalize", "cache", "verbose")) {
+                "locality_fallback", "street_number_fallback", "street_only_fallback",
+                "normalize", "cache", "verbose")) {
     value <- get(arg)
     if (!is.logical(value) || length(value) != 1L || is.na(value))
       stop("'", arg, "' must be TRUE or FALSE", call. = FALSE)
@@ -206,6 +208,15 @@ gnaf_match <- function(addresses, con, max_results = 1L, min_score = 60L,
   parse_timer <- proc.time()[["elapsed"]]
   parsed <- address_parse(addresses, normalize = normalize)
   parse_elapsed <- proc.time()[["elapsed"]] - parse_timer
+
+  # address_parse() has no database access, so when a comma-less address's
+  # trailing street-type word is also a real locality word (e.g. "Point
+  # Lookout" - LOOKOUT is a legitimate street type), it can only guess from a
+  # fixed word list and sometimes loses the locality entirely. Now that a
+  # real connection exists, recover it against the actual locality index.
+  # Gated behind locality_fallback since it's the same kind of DB-assisted
+  # locality guessing that flag already controls.
+  if (isTRUE(locality_fallback)) .recover_missing_locality(con, parsed)
 
   .cli_match_step(verbose, "Standardising parsed input addresses.")
   standardise_timer <- proc.time()[["elapsed"]]
@@ -991,6 +1002,94 @@ WHERE r.match_rank <= %d
   }
 
   res
+}
+
+# Recovers a locality that address_parse() lost because, with no comma to
+# mark the street/suburb boundary, its rightmost apparent street-type word
+# was actually part of the suburb name (e.g. "Point Lookout" - LOOKOUT is a
+# legitimate street type; .LOCALITY_COLLISION_WORDS in R/parse.R already
+# handles some of these, but it's a fixed word list checked without any
+# database access, so it can't be complete, and its "search one word further
+# left" strategy still fails when *both* words of a two-word suburb collide
+# with the vocabulary, e.g. "River Heights" - RIVER is also a street type).
+#
+# Targets only the unambiguous signature of this failure: in_locality is NA
+# but there's leftover street text and a parsed postcode. Reconstructs the
+# original comma-less tail (in_street_name + in_street_type + in_street_suffix,
+# in that left-to-right order - the same order the non-comma parser emits
+# them in) and checks whether its last 1-3 words are an exact, known locality
+# for that postcode (longest match wins, so "RIVER HEIGHTS" isn't shadowed by
+# "HEIGHTS" alone). When one is found, the remaining prefix is re-resolved
+# into street_name/street_type with .resolve_boundary_street_types() - the
+# same function the comma-hint path already uses - so the fix is: treat the
+# newly-found boundary exactly like a comma would have been treated. Modifies
+# `parsed` in place; does nothing to rows that already have a locality.
+.recover_missing_locality <- function(con, parsed) {
+  candidates <- parsed[
+    is.na(in_locality) & !is.na(in_street_name) & !is.na(in_postcode),
+    .(input_id, in_postcode, in_state, in_street_name, in_street_type, in_street_suffix)
+  ]
+  if (nrow(candidates) == 0L) return(invisible(NULL))
+
+  candidates[, remainder := trimws(paste(
+    fifelse(is.na(in_street_name), "", in_street_name),
+    fifelse(is.na(in_street_type), "", in_street_type),
+    fifelse(is.na(in_street_suffix), "", in_street_suffix)
+  ))]
+  words <- strsplit(candidates$remainder, "\\s+")
+  n_words <- lengths(words)
+
+  best_locality <- rep(NA_character_, nrow(candidates))
+  best_prefix <- rep(NA_character_, nrow(candidates))
+  # Longest candidate suffix first, so a genuine two-word locality isn't
+  # shadowed by a shorter partial match that also happens to be real
+  # elsewhere (e.g. "HEIGHTS" alone is a real locality in other postcodes).
+  for (k in 3:1) {
+    open <- is.na(best_locality) & n_words > k
+    if (!any(open)) next
+    idx <- which(open)
+    suffix <- vapply(words[idx], function(w) paste(utils::tail(w, k), collapse = " "), character(1L))
+    prefix <- vapply(words[idx], function(w) paste(utils::head(w, length(w) - k), collapse = " "), character(1L))
+    check <- data.table(row = idx, postcode = candidates$in_postcode[idx],
+                        state = candidates$in_state[idx], suffix = suffix)
+    duckdb::duckdb_register(con, "__gnafr_locrecover__", check, overwrite = TRUE)
+    hits <- tryCatch(
+      setDT(DBI::dbGetQuery(con, "
+        SELECT DISTINCT c.row
+        FROM __gnafr_locrecover__ c
+        JOIN gnaf_locality_index l
+          ON l.postcode = c.postcode AND l.locality_name = c.suffix
+         AND (c.state IS NULL OR l.state = c.state)
+      ")),
+      finally = try(duckdb::duckdb_unregister(con, "__gnafr_locrecover__"), silent = TRUE)
+    )
+    if (nrow(hits) == 0L) next
+    matched_rows <- match(hits$row, idx)
+    best_locality[idx[matched_rows]] <- suffix[matched_rows]
+    best_prefix[idx[matched_rows]] <- prefix[matched_rows]
+  }
+
+  recovered <- which(!is.na(best_locality))
+  if (length(recovered) == 0L) return(invisible(NULL))
+
+  resources <- .get_parser_resources()
+  resolved <- .resolve_boundary_street_types(
+    best_prefix[recovered], rep(TRUE, length(recovered)), resources
+  )
+  street_name <- ifelse(
+    is.na(resolved$start), best_prefix[recovered],
+    trimws(substr(best_prefix[recovered], 1L, resolved$start - 1L))
+  )
+  parsed[
+    match(candidates$input_id[recovered], input_id),
+    `:=`(
+      in_locality = best_locality[recovered],
+      in_street_name = street_name,
+      in_street_type = resolved$canonical,
+      in_street_suffix = NA_character_
+    )
+  ]
+  invisible(NULL)
 }
 
 .match_locality_duckdb <- function(con, inputs_dt, max_results, min_score,

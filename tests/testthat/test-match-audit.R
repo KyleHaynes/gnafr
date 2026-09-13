@@ -37,6 +37,59 @@ test_that("locality fallback ranks distinct postcodes rather than locality rows"
   expect_identical(out$address_detail_pid, "TARGET")
 })
 
+test_that("a locality lost to a street-type/suburb word collision is recovered", {
+  # "Point Lookout" is a real QLD suburb, but "LOOKOUT" is also a legitimate
+  # street type - with no comma to mark the boundary, address_parse() (which
+  # has no database access) picks "LOOKOUT" as the street type and loses the
+  # suburb entirely. gnaf_match() should recover it against the real
+  # gnaf_locality_index once a connection is available.
+  con <- gnaf_connect(":memory:")
+  on.exit(gnaf_disconnect(con), add = TRUE)
+  gnaf_init(con)
+  suppressMessages(gnaf_add(con, data.table::data.table(
+    address_detail_pid = "TARGET", address_label = "15 CUMMING PARADE, POINT LOOKOUT QLD 4183",
+    number_first = 15L, street_name = "CUMMING", street_type = "PARADE",
+    locality_name = "POINT LOOKOUT", state = "QLD", postcode = 4183L
+  )))
+
+  before <- address_parse("15 Cumming Pde Point Lookout QLD 4183")
+  expect_true(is.na(before$in_locality))
+
+  out <- gnaf_match("15 Cumming Pde Point Lookout QLD 4183", con,
+                    cache = FALSE, verbose = FALSE)
+  expect_identical(out$address_detail_pid, "TARGET")
+  expect_identical(out$total_score, 100L)
+  expect_identical(out$input_standardised,
+                   "15 CUMMING PARADE, POINT LOOKOUT QLD 4183")
+})
+
+test_that(".recover_missing_locality() leaves already-resolved and unrecoverable rows untouched", {
+  con <- gnaf_connect(":memory:")
+  on.exit(gnaf_disconnect(con), add = TRUE)
+  gnaf_init(con)
+  DBI::dbExecute(con, "INSERT INTO gnaf_locality_index VALUES ('POINT LOOKOUT', 4183, 'QLD')")
+
+  parsed <- data.table::data.table(
+    input_id = 1:3,
+    in_postcode = c(4183L, 4183L, NA_integer_),
+    in_state = c("QLD", "QLD", NA_character_),
+    in_locality = c(NA_character_, "ALREADY SET", NA_character_),
+    in_street_name = c("CUMMING PDE POINT", "SMITH", NA_character_),
+    in_street_type = c("LOOKOUT", "STREET", NA_character_),
+    in_street_suffix = NA_character_
+  )
+  before <- data.table::copy(parsed)
+  gnafr:::.recover_missing_locality(con, parsed)
+
+  expect_identical(parsed[1L, .(in_locality, in_street_name, in_street_type)],
+                   data.table::data.table(in_locality = "POINT LOOKOUT",
+                                          in_street_name = "CUMMING",
+                                          in_street_type = "PARADE"))
+  # Row 2 already had a locality; row 3 had no postcode to search with -
+  # neither is this function's job, so both must be untouched.
+  expect_identical(parsed[2:3], before[2:3])
+})
+
 test_that("database query errors remain errors when matching quietly", {
   con <- gnaf_connect(":memory:")
   on.exit(gnaf_disconnect(con), add = TRUE)

@@ -300,11 +300,36 @@ test_that("number suffixes follow the house number after unit and building prefi
   )]
   # A suffix must belong to the requested number, not a unit or longer number.
   pairs[4L, number_first := 110L]
-  expect_equal(gnafr:::.score_pairs(pairs)$score_number, c(10L, 10L, 0L, 0L, 0L))
+  # Row 5 (no address_label at all) can't recover a candidate suffix to
+  # compare against - missing evidence, not a conflict, so it lands on the
+  # same 50% tier as an unrecoverable suffix anywhere else in this file.
+  expect_equal(gnafr:::.score_pairs(pairs)$score_number, c(10L, 10L, 0L, 0L, 5L))
 
   pairs <- pairs[1L]
   pairs[, in_number_suffix := NA_character_]
   expect_equal(gnafr:::.score_pairs(pairs)$score_number, 5L)
+})
+
+test_that("a candidate with no recoverable suffix doesn't score worse than one with no suffix info at all", {
+  # Reported bug: "61A Wiliam Street" (unit-style input) vs "61 William
+  # Street" (no suffix) against the same real candidate that has no
+  # separate suffix field - the suffixed input used to score a full number
+  # mismatch (0%) while the unsuffixed one got full credit, a 10-point swing
+  # large enough to push a real candidate below the default min_score and
+  # surface as "no candidate" instead of a genuine, if imperfect, match.
+  label <- "61 WILLIAM HICKEY STREET, REDLYNCH QLD 4870"
+  base <- make_pair("STREET", "STREET",
+                    in_street_name = "WILLIAM", street_name = "WILLIAM HICKEY",
+                    in_locality = "PORTSMITH", locality_name = "REDLYNCH",
+                    in_postcode = 4870L, postcode = 4870L,
+                    in_number_first = 61L, number_first = 61L)
+  base[, address_label := label]
+  no_suffix <- copy(base)
+  with_suffix <- copy(base)[, in_number_suffix := "A"]
+
+  scored <- gnafr:::.score_pairs(rbindlist(list(no_suffix, with_suffix)))
+  expect_equal(scored$score_number, c(10L, 5L))
+  expect_equal(scored$total_score[2L], scored$total_score[1L] - 5L)
 })
 
 test_that("directions distinguish matching, missing and conflicting streets", {

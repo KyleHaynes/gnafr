@@ -94,9 +94,13 @@
     " WHEN %1$s <= %2$s AND %4$s <= %3$s THEN 0.5",
     " WHEN %1$s <= %4$s AND %2$s <= %3$s THEN 0.3 ELSE 0.0 END"
   ), i_first, g_first, i_end, g_end)
+  # Either side missing a suffix is "missing evidence" (50%), not a
+  # mismatch - matching every other missing-evidence tier in this file (see
+  # .score_street_type()). A candidate's number often has no separate suffix
+  # field to compare against at all, which isn't the same as a real conflict.
   suffix <- sprintf(paste0(
     "CASE WHEN %1$s = %2$s THEN 1.0",
-    " WHEN %1$s = '' THEN 0.5 ELSE 0.0 END"
+    " WHEN %1$s = '' OR %2$s = '' THEN 0.5 ELSE 0.0 END"
   ), i_suffix, g_suffix)
   sprintf(paste0(
     "CAST(ROUND_EVEN(%g * (CASE WHEN %s != '' THEN ",
@@ -125,7 +129,9 @@
   )
   i_suffix <- .score_value(.pair_column(pairs, "in_number_suffix"))
   g_suffix <- .score_value(sub("^[0-9]+([A-Z]?).*$", "\\1", token))
-  suffix <- data.table::fcase(i_suffix == g_suffix, 1, i_suffix == "", 0.5, default = 0)
+  # Either side missing a suffix is "missing evidence" (50%), not a mismatch
+  # - see the SQL twin.
+  suffix <- data.table::fcase(i_suffix == g_suffix, 1, i_suffix == "" | g_suffix == "", 0.5, default = 0)
   i_lot <- .score_value(.pair_column(pairs, "in_lot_number"))
   g_lot <- .score_value(.pair_column(pairs, "lot_number"))
   as.integer(round(weight * data.table::fifelse(
