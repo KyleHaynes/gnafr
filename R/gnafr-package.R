@@ -23,7 +23,7 @@ utils::globalVariables(c(
   "in_number_first", "in_number_last", "in_postcode", "in_state",
   "in_street_name", "in_street_type", "input_id", "input_raw",
   "input_standardised", "jaccard_score", "jarowinkler_score", "lbl_key",
-  "left", "match_input_id", "match_rank", "match_status", "matched",
+  "left", "locality_id", "match_input_id", "match_rank", "match_status", "matched",
   "number_first", "number_last", "perturbations", "postcode",
   "retained_count", "right", "score_flat", "score_number",
   "score_postcode", "score_street_name", "score_street_type",

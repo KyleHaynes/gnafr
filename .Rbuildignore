@@ -3,6 +3,7 @@
 ^docs$
 ^slides$
 ^CODE_REVIEW\.md$
+^MATCHING_PERFORMANCE\.md$
 ^scratch$
 ^gnafr$
 ^gnafr\.Rcheck$

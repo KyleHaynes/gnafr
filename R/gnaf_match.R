@@ -684,12 +684,15 @@ gnaf_match <- function(addresses, con, max_results = 1L, min_score = 60L,
     collapse = ",\n"
   )
   score_total <- paste(names(exprs), collapse = " + ")
-  # Each non-street component is at most its weight rounded upwards. This is
-  # deliberately conservative for fractional weights and missing components.
-  other_max <- sum(ceiling(unlist(weights[names(weights) != "street_name"])))
+  # Postcode agreement is cheap and known already. Use its actual score so a
+  # distant fallback postcode cannot borrow points it will never receive.
+  # Bound the remaining components conservatively, including fractional weights.
+  other_max <- sum(ceiling(unlist(weights[
+    !names(weights) %in% c("postcode", "street_name")
+  ])))
   street_bound <- sprintf(
-    "ROUND_EVEN(%g * street_similarity, 0) + %g >= %d",
-    weights$street_name, other_max, min_score
+    "(%s) + ROUND_EVEN(%g * street_similarity, 0) + %g >= %d",
+    exprs$score_postcode, weights$street_name, other_max, min_score
   )
   raw_projection <- "SELECT
     g.address_detail_pid, g.address_label,
@@ -726,6 +729,8 @@ gnaf_match <- function(addresses, con, max_results = 1L, min_score = 60L,
         "i.in_lot_number IS NULL AND i.in_number_first IS NOT NULL",
         "AND g.number_first = i.in_number_first"
       )),
+      # Ordinary inputs only overlap a different start number when the
+      # candidate has a range. This lets DuckDB filter those rows before joining.
       branch(paste(
         "i.in_lot_number IS NULL AND i.in_number_first IS NOT NULL",
         "AND i.in_number_last IS NULL AND g.number_last IS NOT NULL",
@@ -764,7 +769,7 @@ WITH raw_candidates AS (
 %s
 ),
 candidates AS (
-  SELECT * FROM raw_candidates
+  SELECT * FROM raw_candidates c
   WHERE %s
 ),
 components AS (
@@ -1006,8 +1011,12 @@ WHERE r.match_rank <= %d
     .(input_id, in_locality, in_state)
   ])
   if (nrow(fuzzy_inputs) > 0L) {
+    # Many inputs share the same misspelt locality. Score each locality/state
+    # pair once, then expand its postcode choices back to the original inputs.
+    fuzzy_inputs[, locality_id := .GRP, by = .(in_locality, in_state)]
+    fuzzy_keys <- unique(fuzzy_inputs[, .(locality_id, in_locality, in_state)])
     duckdb::duckdb_register(
-      con, "__gnafr_fuzzy_loc_inputs__", fuzzy_inputs, overwrite = TRUE
+      con, "__gnafr_fuzzy_loc_inputs__", fuzzy_keys, overwrite = TRUE
     )
     on.exit(try(
       duckdb::duckdb_unregister(con, "__gnafr_fuzzy_loc_inputs__"),
@@ -1015,26 +1024,30 @@ WHERE r.match_rank <= %d
     ), add = TRUE)
     fuzzy_map <- setDT(DBI::dbGetQuery(con, "
       WITH similarities AS (
-        SELECT i.input_id, l.postcode AS alt_postcode,
+        SELECT i.locality_id, l.postcode AS alt_postcode,
                jaro_winkler_similarity(l.locality_name, i.in_locality) AS similarity
         FROM __gnafr_fuzzy_loc_inputs__ i
         JOIN gnaf_locality_index l
           ON i.in_state IS NULL OR l.state = i.in_state
       ), postcodes AS (
-        SELECT input_id, alt_postcode, MAX(similarity) AS similarity
+        SELECT locality_id, alt_postcode, MAX(similarity) AS similarity
         FROM similarities
         WHERE similarity >= 0.85
-        GROUP BY input_id, alt_postcode
+        GROUP BY locality_id, alt_postcode
       ), ranked AS (
         SELECT *, ROW_NUMBER() OVER (
-          PARTITION BY input_id ORDER BY similarity DESC, alt_postcode
+          PARTITION BY locality_id ORDER BY similarity DESC, alt_postcode
         ) AS locality_rank
         FROM postcodes
       )
-      SELECT DISTINCT input_id, alt_postcode
+      SELECT DISTINCT locality_id, alt_postcode
       FROM ranked
       WHERE locality_rank <= 5
     "))
+    fuzzy_map <- fuzzy_inputs[fuzzy_map, on = "locality_id",
+                              nomatch = 0L, allow.cartesian = TRUE][
+      , .(input_id, alt_postcode)
+    ]
     loc_map <- unique(rbindlist(list(loc_map, fuzzy_map), use.names = TRUE))
   }
 
