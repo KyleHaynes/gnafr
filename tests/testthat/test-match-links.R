@@ -79,15 +79,17 @@ test_that("strong core candidates never suppress a better alias or its linked re
   on.exit(gnaf_disconnect(con), add = TRUE)
   competitor <- linked_address_rows()[3L]
   competitor[, `:=`(address_detail_pid = "COMPETITOR",
-                    address_label = "UNIT 2 10 ODD STREET, ST LUCIA QLD 4067",
-                    street_name = "ODD", alias_type = NA_character_,
+                    address_label = "UNIT 2 10 ODE STREET, ST LUCIA QLD 4067",
+                    street_name = "ODE", alias_type = NA_character_,
                     alias_principal = "PRINCIPAL", principal_pid = NA_character_)]
   suppressMessages(gnaf_add(con, competitor))
   input <- "Unit 2 10 Olde Street, St Lucia QLD 4067"
   core <- gnaf_match(input, con, include_aliases = FALSE,
                      cache = FALSE, verbose = FALSE)
   expect_identical(core$address_detail_pid, "COMPETITOR")
-  expect_gt(core$total_score, 80L)
+  # ODE is close enough to remain a strong competitor under the stricter
+  # curve, but OLD (the alias) is a better match to OLDE.
+  expect_gt(core$total_score, 70L)
   for (threshold in c(0L, 80L, 90L, 100L)) {
     original <- gnaf_match(input, con, fallback_threshold = threshold,
                            cache = FALSE, verbose = FALSE)
@@ -180,7 +182,7 @@ test_that("return options keep cache entries tied to the original candidate", {
   # address_label verbatim, even after standardisation - this must always
   # resolve via fuzzy scoring on the slow path, not the exact-label fast path,
   # so the second call below genuinely exercises the cache-lookup path.
-  input <- "Unit 2 10 Olde Street, St Lucia QLD 4067"
+  input <- "Unit 2 10 Old Street, St Lucai QLD 4067"
   first <- gnaf_match(input, con, return_principal = TRUE, return_primary = TRUE,
                       verbose = FALSE)
   expect_identical(first$address_detail_pid, "PRIMARY")

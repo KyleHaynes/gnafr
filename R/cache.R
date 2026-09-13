@@ -3,7 +3,13 @@
 # ---------------------------------------------------------------------------
 
 # Invalidate scores from older candidate-pruning and locality-ranking rules.
-.CACHE_ALGORITHM_VERSION <- 6L
+# v7: score_street_name/score_suburb are reshaped so unrelated words near
+# Jaro-Winkler's ~0.5-0.6 noise floor no longer bank meaningful partial
+# credit, and the .score_street_type() both-missing bug is fixed - old
+# cached scores no longer reflect the current formula.
+# v8: repair contextual dwelling-marker typos and reserve full name credit
+# for exact agreement. Old matches and scores must be recomputed.
+.CACHE_ALGORITHM_VERSION <- 8L
 
 #' Show the current state of the match cache
 #'

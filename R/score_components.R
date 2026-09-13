@@ -139,7 +139,10 @@
   g_type <- .score_value_sql(paste0(g, ".street_type"))
   i_suffix <- .score_mapped_value_sql(paste0(i, ".in_street_suffix"), .SCORE_DIRECTIONS)
   g_suffix <- .score_mapped_value_sql(paste0(g, ".street_suffix"), .SCORE_DIRECTIONS)
-  type <- sprintf("CASE WHEN %1$s = %2$s THEN 1.0 WHEN %1$s = '' OR %2$s = '' THEN 0.5 ELSE 0.4 END", i_type, g_type)
+  # Check "missing" before "equal": both sides coerce a missing type to '',
+  # so checking equality first would let two absent types masquerade as an
+  # agreement instead of the intended missing-evidence tier.
+  type <- sprintf("CASE WHEN %1$s = '' OR %2$s = '' THEN 0.5 WHEN %1$s = %2$s THEN 1.0 ELSE 0.4 END", i_type, g_type)
   suffix <- sprintf("CASE WHEN %1$s = %2$s THEN 1.0 WHEN %1$s = '' OR %2$s = '' THEN 0.5 ELSE 0.0 END", i_suffix, g_suffix)
   sprintf("CAST(ROUND_EVEN(%g * (%s) * (%s), 0) AS INTEGER)", weight, type, suffix)
 }
@@ -149,7 +152,8 @@
   g_type <- .score_value(pairs$street_type)
   i_suffix <- .score_mapped_value(.pair_column(pairs, "in_street_suffix"), .SCORE_DIRECTIONS)
   g_suffix <- .score_mapped_value(.pair_column(pairs, "street_suffix"), .SCORE_DIRECTIONS)
-  type <- data.table::fcase(i_type == g_type, 1, i_type == "" | g_type == "", 0.5, default = 0.4)
+  # Missing-evidence check must precede the equality check - see the SQL twin.
+  type <- data.table::fcase(i_type == "" | g_type == "", 0.5, i_type == g_type, 1, default = 0.4)
   suffix <- data.table::fcase(i_suffix == g_suffix, 1, i_suffix == "" | g_suffix == "", 0.5, default = 0)
   as.integer(round(weight * type * suffix))
 }
@@ -210,4 +214,68 @@
     "CAST(ROUND_EVEN(%g * (CASE WHEN %s AND %s THEN 0.6 * (%s) + 0.4 * (%s)",
     " WHEN %s THEN (%s) WHEN %s THEN (%s) ELSE 1.0 END), 0) AS INTEGER)"
   ), weight, flat_present, level_present, flat, level, flat_present, flat, level_present, level)
+}
+
+# Shared shape for every "raw Jaro-Winkler similarity -> credit multiplier"
+# mapping below: full credit at/above `high`, clamped to `floor` at/below
+# `low`, and a squared ramp in between that keeps the floor's edge gentle
+# while still reaching full credit only for genuinely close matches.
+.similarity_ramp <- function(sim, low, high, floor) {
+  ramp <- pmin(1, pmax(0, (sim - low) / (high - low)))
+  floor + (1 - floor) * ramp^2
+}
+
+.similarity_ramp_sql <- function(sim_expr, low, high, floor) {
+  ramp <- sprintf("GREATEST(0.0, LEAST(1.0, (%s - %g) / %g))", sim_expr, low, high - low)
+  sprintf("(%g + %g * POWER(%s, 2))", floor, 1 - floor, ramp)
+}
+
+# Maps a single street_name/suburb Jaro-Winkler similarity (isolated word(s),
+# not diluted by surrounding address text) to a credit multiplier. Real
+# unrelated street/suburb names of similar length land at 0.48-0.60
+# (CERIUM/TUCKEROO 0.56, GOODWIN/NORMAN 0.54, MAPLE/OAK 0.51, KINGS/BURNS
+# 0.60), while genuine near-matches (abbreviation/typo differences) sit at
+# 0.84-1.00 (ST JAMES/SAINT JAMES 0.84, MARTHA/MARHTA 0.96) - the gap between
+# these should receive progressively more credit, without a full-credit
+# plateau at 0.85. A wrong street shouldn't retain much credit just because
+# it happens to share a few letters with the right one.
+.COMPONENT_SIM_LOW <- 0.60
+.COMPONENT_SIM_HIGH <- 1.0
+.COMPONENT_SIM_FLOOR <- 0.05
+
+.component_similarity_factor <- function(sim) {
+  .similarity_ramp(sim, .COMPONENT_SIM_LOW, .COMPONENT_SIM_HIGH, .COMPONENT_SIM_FLOOR)
+}
+
+.component_similarity_sql <- function(sim_expr) {
+  .similarity_ramp_sql(sim_expr, .COMPONENT_SIM_LOW, .COMPONENT_SIM_HIGH, .COMPONENT_SIM_FLOOR)
+}
+
+# Rounding must not promote an imperfect name to full agreement, even for
+# long names with one small edit. Exact text is checked independently of JW:
+# implementations can return 1 for distinct strings in edge cases.
+.score_name <- function(input, candidate, weight) {
+  present <- !is.na(input) & !is.na(candidate) & nzchar(input) & nzchar(candidate)
+  result <- integer(length(input))
+  exact <- present & input == candidate
+  result[exact] <- as.integer(round(weight))
+  fuzzy <- present & !exact
+  if (any(fuzzy)) {
+    similarity <- fast.string::jaro_winkler(input[fuzzy], candidate[fuzzy], p = 0.1)
+    result[fuzzy] <- as.integer(pmin(
+      max(0, round(weight) - 1),
+      round(weight * .component_similarity_factor(similarity))
+    ))
+  }
+  result
+}
+
+.score_name_sql <- function(input, candidate, weight, similarity) {
+  sprintf(paste0(
+    "CASE WHEN %1$s IS NULL OR %2$s IS NULL OR %1$s = '' OR %2$s = '' THEN 0",
+    " WHEN %1$s = %2$s THEN %3$d",
+    " ELSE CAST(LEAST(%4$d, ROUND_EVEN(%5$g * %6$s, 0)) AS INTEGER) END"
+  ), input, candidate, as.integer(round(weight)),
+  as.integer(max(0, round(weight) - 1)), weight,
+  .component_similarity_sql(similarity))
 }

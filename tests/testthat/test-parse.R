@@ -1,5 +1,32 @@
 library(data.table)
 
+test_that("misspelled dwelling markers retain unit and street-number identity", {
+  markers <- c("UNIT", "UNI", "UNTI", "UNITS", "UN", "FLTA", "APARTMNT", "SUIET")
+  x <- paste(markers, "3 24 ILLAWONG STREET, CANNONVALE QLD 4802")
+  for (normalize in c(TRUE, FALSE)) {
+    parsed <- address_parse(x, normalize = normalize)
+    expect_equal(parsed$in_flat_number, rep("3", length(x)))
+    expect_equal(parsed$in_number_first, rep(24L, length(x)))
+    expect_equal(parsed$in_street_name, rep("ILLAWONG", length(x)))
+    expect_true(all(is.na(parsed$in_building_name)))
+    expect_identical(parsed$input_raw, x)
+    expect_identical(parsed$input_id, seq_along(x))
+  }
+})
+
+test_that("dwelling typo recovery is contextual and preserves building prefixes", {
+  x <- c(NA_character_, "", "UNI 24 ILLAWONG STREET, CANNONVALE QLD 4802",
+    "SUNRISE UNI 3 24 ILLAWONG STREET CANNONVALE QLD 4802",
+    "SUNRISE UNIT 3 24 ILLAWONG STREET, CANNONVALE QLD 4802",
+    "10 UNIT STREET, CANNONVALE QLD 4802")
+  p <- address_parse(x)
+  expect_true(all(is.na(p$in_flat_number[c(1L, 2L, 3L, 6L)])))
+  expect_equal(p$in_number_first[3:6], c(24L, 24L, 24L, 10L))
+  expect_equal(p$in_flat_number[4:5], c("3", "3"))
+  expect_equal(p$in_building_name[3:5], c("UNI", "SUNRISE", "SUNRISE"))
+  expect_identical(p$input_raw, x)
+})
+
 # ---- Basic well-formed addresses -------------------------------------------
 
 test_that("standard address parses all fields", {

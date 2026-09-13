@@ -85,13 +85,11 @@
       i, g, i, g, as.integer(round(weights$postcode * 0.4)),
       i, g, i, g, as.integer(round(weights$postcode * 0.2))
     ),
-    score_suburb = sprintf(
-      "CASE WHEN %s.in_locality IS NOT NULL AND %s.locality_name IS NOT NULL THEN CAST(ROUND_EVEN(%g * %s, 0) AS INTEGER) ELSE 0 END",
-      i, g, w_sub, suburb_similarity
+    score_suburb = .score_name_sql(
+      paste0(i, ".in_locality"), paste0(g, ".locality_name"), w_sub, suburb_similarity
     ),
-    score_street_name = sprintf(
-      "CASE WHEN %s.in_street_name IS NOT NULL AND %s.street_name IS NOT NULL THEN CAST(ROUND_EVEN(%g * %s, 0) AS INTEGER) ELSE 0 END",
-      i, g, w_sn, street_similarity
+    score_street_name = .score_name_sql(
+      paste0(i, ".in_street_name"), paste0(g, ".street_name"), w_sn, street_similarity
     ),
     score_street_type = .score_street_type_sql(w_st, i, g),
     score_number = .score_number_sql(w_num, i, g),
@@ -118,25 +116,15 @@
   }]
 
   # --- Suburb / locality (15 pts) ------------------------------------------
-  # Jaro-Winkler similarity; NA on either side → 0
-  jw_suburb <- rep(0, nrow(pairs))
-  ok <- !is.na(pairs$in_locality) & !is.na(pairs$locality_name)
-  if (any(ok)) {
-    jw_suburb[ok] <- fast.string::jaro_winkler(
-      pairs$in_locality[ok], pairs$locality_name[ok], p = 0.1
-    )
-  }
-  pairs[, score_suburb := as.integer(round(weights$suburb * jw_suburb))]
+  # Jaro-Winkler similarity; NA on either side → 0. Reshaped via
+  # .component_similarity_factor() so two unrelated names of similar length
+  # (raw JW noise floor ~0.5-0.6) don't bank meaningful partial credit -
+  # only applied where both sides are present, so the reshaping's own floor
+  # never leaks into the NA case (see .COMPONENT_SIM_FLOOR).
+  pairs[, score_suburb := .score_name(in_locality, locality_name, weights$suburb)]
 
   # --- Street name (40 pts) ------------------------------------------------
-  jw_street <- rep(0, nrow(pairs))
-  ok <- !is.na(pairs$in_street_name) & !is.na(pairs$street_name)
-  if (any(ok)) {
-    jw_street[ok] <- fast.string::jaro_winkler(
-      pairs$in_street_name[ok], pairs$street_name[ok], p = 0.1
-    )
-  }
-  pairs[, score_street_name := as.integer(round(weights$street_name * jw_street))]
+  pairs[, score_street_name := .score_name(in_street_name, street_name, weights$street_name)]
 
   pairs[, score_street_type := .score_street_type(pairs, weights$street_type)]
   pairs[, score_number := .score_number(pairs, weights$number)]

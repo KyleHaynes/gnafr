@@ -82,6 +82,7 @@ address_parse <- function(addresses, normalize = TRUE) {
 
   resources <- .get_parser_resources()
   structural <- .normalize_addr_keep_commas(addresses)
+  structural <- .repair_flat_markers(structural, resources$ft_map)
   unique_idx <- !duplicated(structural)
   unique_structural <- structural[unique_idx]
   boundaries <- .parse_comma_boundaries(unique_structural, resources)
@@ -117,6 +118,40 @@ address_parse <- function(addresses, normalize = TRUE) {
     in_level_type = character(), in_level_number = character(),
     in_lot_number = character(), in_building_name = character()
   )
+}
+
+# Recover a misspelled dwelling marker only where two separate identifiers
+# follow it: marker, unit number, street number, street name. Never fuzzily
+# reinterpret a lone building name or a short official abbreviation. Restrict
+# the vocabulary to common dwelling markers, and reject ambiguous corrections.
+.repair_flat_markers <- function(x, ft_map) {
+  pattern <- "^((?:.*\\s)?)([A-Z]{3,})\\s+(\\d+[A-Z]?)\\s+(\\d+[A-Z]?(?:-\\d+[A-Z]?)?)\\s+(?=[A-Z])"
+  parts <- stringi::stri_match_first_regex(x, pattern)
+  rows <- which(!is.na(parts[, 1L]) & !parts[, 3L] %in% names(ft_map))
+  if (length(rows) == 0L) return(x)
+  vocabulary <- c("UNIT", "FLAT", "APARTMENT", "SUITE")
+  tokens <- unique(parts[rows, 3L])
+  correction <- vapply(tokens, function(token) {
+    close <- as.vector(utils::adist(token, vocabulary)) == 1L
+    # Adjacent transpositions (UNTI) count as one typing error too.
+    letters <- strsplit(token, "", fixed = TRUE)[[1L]]
+    swapped <- vapply(seq_len(length(letters) - 1L), function(j) {
+      value <- letters
+      value[c(j, j + 1L)] <- value[c(j + 1L, j)]
+      paste0(value, collapse = "")
+    }, character(1L))
+    choices <- vocabulary[close | vocabulary %in% swapped]
+    if (length(choices) == 1L) choices else NA_character_
+  }, character(1L))
+  replacements <- unname(correction[parts[rows, 3L]])
+  take <- !is.na(replacements)
+  rows <- rows[take]
+  if (length(rows) > 0L) {
+    start <- nchar(parts[rows, 2L]) + 1L
+    x[rows] <- paste0(parts[rows, 2L], replacements[take],
+      stringi::stri_sub(x[rows], from = start + nchar(parts[rows, 3L])))
+  }
+  x
 }
 
 .parse_comma_boundaries <- function(x, resources) {

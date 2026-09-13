@@ -99,7 +99,7 @@
     code span.vs { color: #20794d; } /* VerbatimString */
     code span.wa { color: #5e5e5e; font-style: italic; } /* Warning */
   </style>
-  <link rel="stylesheet" href="gnafr-overview_files/libs/revealjs/dist/theme/quarto-0125c6af2f333a328c0a52158408778b.css">
+  <link rel="stylesheet" href="gnafr-overview_files/libs/revealjs/dist/theme/quarto-79b72c4e67728f2b3767ffa54c3642a1.css">
   <link href="gnafr-overview_files/libs/revealjs/plugin/quarto-line-highlight/line-highlight.css" rel="stylesheet">
   <link href="gnafr-overview_files/libs/revealjs/plugin/reveal-menu/menu.css" rel="stylesheet">
   <link href="gnafr-overview_files/libs/revealjs/plugin/reveal-menu/quarto-menu.css" rel="stylesheet">
@@ -214,25 +214,6 @@ Kyle Haynes
 
   <p class="date">13 September 2026</p>
 </section>
-<section class="slide level2">
-
-<aside class="notes">
-<ul>
-<li>This began as a practical data-linkage problem, not an attempt to build another geocoder.</li>
-<li>Explain why it exists, where the judgement sits, how it works and how to use it.</li>
-</ul>
-<style type="text/css">
-        span.MJX_Assistive_MathML {
-          position:absolute!important;
-          clip: rect(1px, 1px, 1px, 1px);
-          padding: 1px 0 0 0!important;
-          border: 0!important;
-          height: 1px!important;
-          width: 1px!important;
-          overflow: hidden!important;
-          display:block!important;
-      }</style></aside>
-</section>
 <section id="the-problem-i-needed-to-solve" class="slide level2">
 <h2>The problem I needed to solve</h2>
 <div class="statement">
@@ -240,20 +221,26 @@ Kyle Haynes
 </div>
 <div class="columns">
 <div class="column" style="width:31%;">
-<section id="messy-inputs" class="card">
-<h3>Messy inputs</h3>
+<div class="card">
+<div class="card-title">
+Messy inputs
+</div>
 <p>Abbreviations, spelling errors, missing punctuation, old street names, wrong postcodes and partial addresses.</p>
-</section>
+</div>
 </div><div class="column" style="width:31%;">
-<section id="bulk-work" class="card">
-<h3>Bulk work</h3>
+<div class="card">
+<div class="card-title">
+Bulk work
+</div>
 <p>Not an autocomplete box: hundreds of thousands of existing records processed together.</p>
-</section>
+</div>
 </div><div class="column" style="width:31%;">
-<section id="explainable-decisions" class="card">
-<h3>Explainable decisions</h3>
+<div class="card">
+<div class="card-title">
+Explainable decisions
+</div>
 <p>A single “confidence” number was not enough. I needed to see <em>which parts</em> agreed.</p>
-</section>
+</div>
 </div></div>
 <aside class="notes">
 <ul>
@@ -486,30 +473,42 @@ Sources: <a href="https://docs.geoscape.com.au/projects/gnaf_desc/en/stable/appe
 <section id="more-than-string-matching" class="slide level2">
 <h2>More than string matching</h2>
 <div class="capability-grid">
-<section id="build" class="card">
-<h3>Build</h3>
+<div class="card">
+<div class="card-title">
+Build
+</div>
 <p><code>gnaf_build_db()</code> loads G-NAF Standard, aliases, indexes and street-level records.</p>
-</section>
-<section id="match" class="card">
-<h3>Match</h3>
+</div>
+<div class="card">
+<div class="card-title">
+Match
+</div>
 <p><code>gnaf_match()</code> parses, searches, scores, ranks and geocodes in bulk.</p>
-</section>
-<section id="extend" class="card">
-<h3>Extend</h3>
+</div>
+<div class="card">
+<div class="card-title">
+Extend
+</div>
 <p><code>gnaf_add()</code> brings internal or operational addresses into the same search.</p>
-</section>
-<section id="resolve" class="card">
-<h3>Resolve</h3>
+</div>
+<div class="card">
+<div class="card-title">
+Resolve
+</div>
 <p>Principal, primary and alias fields distinguish a matched spelling from the dwelling or property.</p>
-</section>
-<section id="enrich" class="card">
-<h3>Enrich</h3>
+</div>
+<div class="card">
+<div class="card-title">
+Enrich
+</div>
 <p>Saved geographies append SA2, LGA or other polygon attributes.</p>
-</section>
-<section id="review" class="card">
-<h3>Review</h3>
+</div>
+<div class="card">
+<div class="card-title">
+Review
+</div>
 <p>Shiny and static diff views expose scores and generate filter code.</p>
-</section>
+</div>
 </div>
 <aside class="notes">
 <ul>
@@ -1138,33 +1137,39 @@ flowchart LR
 <h2>Review the population, not just one row</h2>
 <div class="columns">
 <div class="column" style="width:48%;">
-<section id="gnaf_app" class="card">
-<h3><code>gnaf_app()</code></h3>
+<div class="card">
+<div class="card-title">
+<code>gnaf_app()</code>
+</div>
 <ul>
 <li>Enter addresses and match interactively</li>
 <li>Compare raw, standardised and matched text</li>
 <li>Inspect component and whole-string scores</li>
 <li>Download candidate results</li>
 </ul>
-</section>
-<section id="static-diff-output" class="card">
-<h3>Static diff output</h3>
+</div>
+<div class="card">
+<div class="card-title">
+Static diff output
+</div>
 <div class="code-copy-outer-scaffold"><div class="sourceCode" id="cb9"><pre class="sourceCode r code-with-copy"><code class="sourceCode r"><span id="cb9-1"><a href="" aria-hidden="true" tabindex="-1"></a><span class="fu">gnaf_threshold_filter</span>(</span>
 <span id="cb9-2"><a href="" aria-hidden="true" tabindex="-1"></a>  results,</span>
 <span id="cb9-3"><a href="" aria-hidden="true" tabindex="-1"></a>  <span class="at">html =</span> <span class="st">"review.html"</span></span>
 <span id="cb9-4"><a href="" aria-hidden="true" tabindex="-1"></a>)</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
 <p>Lightweight review across a very large result.</p>
-</section>
+</div>
 </div><div class="column" style="width:48%;">
-<section id="gnaf_threshold_filter" class="card">
-<h3><code>gnaf_threshold_filter()</code></h3>
+<div class="card">
+<div class="card-title">
+<code>gnaf_threshold_filter()</code>
+</div>
 <ul>
 <li>Move score ranges and watch scope change</li>
 <li>Flag known false positives</li>
 <li>Compare Jaro-Winkler, Jaccard and Levenshtein scores</li>
 <li>Print the final rule as code</li>
 </ul>
-</section>
+</div>
 <div class="code-copy-outer-scaffold"><div class="sourceCode" id="cb10"><pre class="sourceCode r code-with-copy"><code class="sourceCode r"><span id="cb10-1"><a href="" aria-hidden="true" tabindex="-1"></a><span class="co"># Generated, reproducible rule</span></span>
 <span id="cb10-2"><a href="" aria-hidden="true" tabindex="-1"></a>results[</span>
 <span id="cb10-3"><a href="" aria-hidden="true" tabindex="-1"></a>  matched <span class="sc">==</span> <span class="cn">TRUE</span> <span class="sc">&amp;</span></span>
@@ -1340,13 +1345,25 @@ flowchart LR
 <h2>Three ideas to take away</h2>
 <div class="three-ideas">
 <div class="idea">
-<p><span class="idea-number">1</span> ### Own the reference data G-NAF and custom records live in a persistent, portable DuckDB file.</p>
+<span class="idea-number">1</span>
+<div class="idea-title">
+Own the reference data
+</div>
+<p>G-NAF and custom records live in a persistent, portable DuckDB file.</p>
 </div>
 <div class="idea">
-<p><span class="idea-number">2</span> ### Keep judgement visible Scores, alternatives and relationships explain the result.</p>
+<span class="idea-number">2</span>
+<div class="idea-title">
+Keep judgement visible
+</div>
+<p>Scores, alternatives and relationships explain the result.</p>
 </div>
 <div class="idea">
-<p><span class="idea-number">3</span> ### Tune for the use case Precision, coverage and output entity are explicit choices.</p>
+<span class="idea-number">3</span>
+<div class="idea-title">
+Tune for the use case
+</div>
+<p>Precision, coverage and output entity are explicit choices.</p>
 </div>
 </div>
 <h3 id="questions-and-difficult-addresses-welcome">Questions — and difficult addresses welcome</h3>

@@ -687,12 +687,19 @@ gnaf_match <- function(addresses, con, max_results = 1L, min_score = 60L,
   # Postcode agreement is cheap and known already. Use its actual score so a
   # distant fallback postcode cannot borrow points it will never receive.
   # Bound the remaining components conservatively, including fractional weights.
+  # The street-name term must use the same reshaped similarity
+  # .score_street_name will actually be computed from
+  # (.component_similarity_sql()), not the raw similarity - the reshaping
+  # curve can score a high-but-imperfect similarity *higher* than the raw
+  # value. Keep the bound tied to the scoring curve; omitting the imperfect-
+  # name rounding cap here only makes the bound conservative.
   other_max <- sum(ceiling(unlist(weights[
     !names(weights) %in% c("postcode", "street_name")
   ])))
   street_bound <- sprintf(
-    "(%s) + ROUND_EVEN(%g * street_similarity, 0) + %g >= %d",
-    exprs$score_postcode, weights$street_name, other_max, min_score
+    "(%s) + ROUND_EVEN(%g * %s, 0) + %g >= %d",
+    exprs$score_postcode, weights$street_name,
+    .component_similarity_sql("street_similarity"), other_max, min_score
   )
   raw_projection <- "SELECT
     g.address_detail_pid, g.address_label,

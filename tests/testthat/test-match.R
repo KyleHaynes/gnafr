@@ -267,10 +267,13 @@ test_that("input ranges retrieve interior numbers in postcode, state and localit
                     con, max_results = 5L, cache = FALSE, verbose = FALSE)
   for (id in 1:3) {
     matched <- out[input_id == id]
-    # The postcode path also fills spare result slots with fuzzy candidates
-    # above min_score, even when an exact-component match is already strong.
-    expected_pids <- c("RANGE", "INTERIOR", "OVERLAP", if (id == 1L) "QLD")
-    expected_numbers <- c(10L, 5L, 3L, if (id == 1L) 5L)
+    # "QLD" (a same-postcode fixture row with an unrelated street and
+    # suburb - MAIN/SPRINGFIELD vs the input's RANGE/BRISBANE) used to
+    # squeak past min_score as a spare-slot filler; the reshaped
+    # score_street_name/score_suburb (see .component_similarity_factor())
+    # now correctly keeps a merely-coincidental postcode match out.
+    expected_pids <- c("RANGE", "INTERIOR", "OVERLAP")
+    expected_numbers <- c(10L, 5L, 3L)
     expect_equal(matched$address_detail_pid, expected_pids)
     expect_equal(matched$score_number, expected_numbers)
   }

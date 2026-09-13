@@ -25,11 +25,6 @@ format:
 mermaid-format: js
 ---
 
-::: {.notes}
-- This began as a practical data-linkage problem, not an attempt to build another geocoder.
-- Explain why it exists, where the judgement sits, how it works and how to use it.
-:::
-
 ## The problem I needed to solve
 
 ::: {.statement}
@@ -39,19 +34,19 @@ I had large collections of Australian addresses that were **almost right** — a
 ::: {.columns}
 ::: {.column width="31%"}
 ::: {.card}
-### Messy inputs
+<div class="card-title">Messy inputs</div>
 Abbreviations, spelling errors, missing punctuation, old street names, wrong postcodes and partial addresses.
 :::
 :::
 ::: {.column width="31%"}
 ::: {.card}
-### Bulk work
+<div class="card-title">Bulk work</div>
 Not an autocomplete box: hundreds of thousands of existing records processed together.
 :::
 :::
 ::: {.column width="31%"}
 ::: {.card}
-### Explainable decisions
+<div class="card-title">Explainable decisions</div>
 A single “confidence” number was not enough. I needed to see *which parts* agreed.
 :::
 :::
@@ -161,27 +156,27 @@ input → standardised input → matched G-NAF label → PID → coordinates →
 
 ::: {.capability-grid}
 ::: {.card}
-### Build
+<div class="card-title">Build</div>
 `gnaf_build_db()` loads G-NAF Standard, aliases, indexes and street-level records.
 :::
 ::: {.card}
-### Match
+<div class="card-title">Match</div>
 `gnaf_match()` parses, searches, scores, ranks and geocodes in bulk.
 :::
 ::: {.card}
-### Extend
+<div class="card-title">Extend</div>
 `gnaf_add()` brings internal or operational addresses into the same search.
 :::
 ::: {.card}
-### Resolve
+<div class="card-title">Resolve</div>
 Principal, primary and alias fields distinguish a matched spelling from the dwelling or property.
 :::
 ::: {.card}
-### Enrich
+<div class="card-title">Enrich</div>
 Saved geographies append SA2, LGA or other polygon attributes.
 :::
 ::: {.card}
-### Review
+<div class="card-title">Review</div>
 Shiny and static diff views expose scores and generate filter code.
 :::
 :::
@@ -547,14 +542,14 @@ gnaf_match(x, con, geographies = "sa2_2021")
 ::: {.columns}
 ::: {.column width="48%"}
 ::: {.card}
-### `gnaf_app()`
+<div class="card-title"><code>gnaf_app()</code></div>
 - Enter addresses and match interactively
 - Compare raw, standardised and matched text
 - Inspect component and whole-string scores
 - Download candidate results
 :::
 ::: {.card}
-### Static diff output
+<div class="card-title">Static diff output</div>
 ```r
 gnaf_threshold_filter(
   results,
@@ -566,7 +561,7 @@ Lightweight review across a very large result.
 :::
 ::: {.column width="48%"}
 ::: {.card}
-### `gnaf_threshold_filter()`
+<div class="card-title"><code>gnaf_threshold_filter()</code></div>
 - Move score ranges and watch scope change
 - Flag known false positives
 - Compare Jaro-Winkler, Jaccard and Levenshtein scores
@@ -682,17 +677,17 @@ Keep the full candidate table as an audit artefact. Filtered outputs are reprodu
 ::: {.three-ideas}
 ::: {.idea}
 <span class="idea-number">1</span>
-### Own the reference data
+<div class="idea-title">Own the reference data</div>
 G-NAF and custom records live in a persistent, portable DuckDB file.
 :::
 ::: {.idea}
 <span class="idea-number">2</span>
-### Keep judgement visible
+<div class="idea-title">Keep judgement visible</div>
 Scores, alternatives and relationships explain the result.
 :::
 ::: {.idea}
 <span class="idea-number">3</span>
-### Tune for the use case
+<div class="idea-title">Tune for the use case</div>
 Precision, coverage and output entity are explicit choices.
 :::
 :::

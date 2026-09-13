@@ -112,7 +112,12 @@ $presentation-heading-font-weight: 600 !default;
   box-shadow: 0 4px 14px rgba(18, 64, 92, 0.06);
   font-size: 0.84em;
 }
-.card h3 { margin-top: 0; color: #12405c; }
+.card-title {
+  margin: 0 0 0.35em;
+  color: #12405c;
+  font-size: 1.15em;
+  font-weight: 600;
+}
 .card ul { margin-bottom: 0; }
 
 .capability-grid {
@@ -217,7 +222,12 @@ $presentation-heading-font-weight: 600 !default;
   text-align: center;
   font-size: 0.8em;
 }
-.idea h3 { margin: 0.2em 0; }
+.idea-title {
+  margin: 0.3em 0;
+  color: #12405c;
+  font-size: 1.12em;
+  font-weight: 600;
+}
 .idea-number {
   display: inline-grid;
   width: 1.6em;

@@ -37,10 +37,10 @@ test_that("matching street type scores full weight", {
   expect_equal(out$score_street_type, 10L)
 })
 
-test_that("both-absent street type scores full weight", {
+test_that("both-absent street type scores 50 pct (missing evidence, not agreement)", {
   p <- make_pair(NA_character_, NA_character_)
   out <- gnafr:::.score_pairs(p)
-  expect_equal(out$score_street_type, 10L)
+  expect_equal(out$score_street_type, 5L)
 })
 
 test_that("one-side absent scores 50 pct", {
@@ -236,6 +236,26 @@ test_that("total_score is sum of component scores", {
                out$score_street_type + out$score_number + out$score_flat)
 })
 
+test_that("a wrong street no longer keeps pace with a same-street match", {
+  correct <- make_pair(
+    in_street_name = "MAPLE",  street_name = "MAPLE",
+    in_street_type = "ROAD",   street_type = "COURT",
+    in_postcode = 3000L, postcode = 3000L,
+    in_locality = "MELBOURNE", locality_name = "MELBOURNE",
+    in_number_first = 5L, number_first = 5L
+  )
+  wrong <- make_pair(
+    in_street_name = "MAPLE",  street_name = "OAK",
+    in_street_type = "ROAD",   street_type = "ROAD",
+    in_postcode = 3000L, postcode = 3000L,
+    in_locality = "MELBOURNE", locality_name = "MELBOURNE",
+    in_number_first = 5L, number_first = 5L
+  )
+  pairs <- rbindlist(list(correct, wrong))
+  out <- gnafr:::.score_pairs(pairs)
+  expect_true(out[street_name == "OAK", score_street_name] < 5L)
+})
+
 test_that("custom weights use the same rounding in R and DuckDB", {
   pairs <- rbindlist(list(
     make_pair("ROAD", "ROAD", in_postcode = 4000L, postcode = 4001L),
@@ -339,4 +359,68 @@ test_that("granular SQL and R scores agree for missing inputs and custom weights
   }
   empty <- gnafr:::.score_pairs(pairs[0L])
   expect_identical(empty$total_score, integer())
+})
+
+# ---- Street name / suburb similarity reshaping ------------------------------
+
+test_that("imperfect and missing names cannot earn full credit in R or SQL", {
+  pairs <- rbindlist(lapply(c("24 ILLAWONG", "ILLAWON", "ILLAWONG", "", NA_character_),
+    function(value) make_pair("STREET", "STREET", in_street_name = value,
+      street_name = "ILLAWONG", in_locality = value, locality_name = "ILLAWONG")))
+  # Include an edit in a long name that ordinary integer rounding can hide.
+  long_name <- paste(rep("LONG", 30L), collapse = " ")
+  pairs <- rbindlist(list(pairs, make_pair("STREET", "STREET",
+    in_street_name = paste0(long_name, " A"), street_name = paste0(long_name, " B"))))
+  con <- gnaf_connect(":memory:")
+  on.exit(gnaf_disconnect(con), add = TRUE)
+  duckdb::duckdb_register(con, "name_pairs", pairs)
+  for (weights in list(gnafr:::.default_match_weights(),
+      list(postcode = 20, suburb = 15.5, street_name = 39.5, street_type = 10, number = 10, flat = 5),
+      list(postcode = 20, suburb = 0, street_name = 0, street_type = 30, number = 45, flat = 5))) {
+    expected <- gnafr:::.score_pairs(copy(pairs), weights)
+    expr <- gnafr:::.score_sql_exprs(weights, i = "p", g = "p")
+    sql <- paste(sprintf("%s AS %s", expr, names(expr)), collapse = ", ")
+    actual <- as.data.table(DBI::dbGetQuery(con, paste("SELECT", sql, "FROM name_pairs p")))
+    expect_equal(actual, expected[, names(expr), with = FALSE])
+    expect_equal(expected$score_street_name[3L], round(weights$street_name))
+    expect_equal(expected$score_street_name[4:5], c(0L, 0L))
+    if (weights$street_name > 0) {
+      expect_true(all(expected$score_street_name[c(1L, 2L, 6L)] < round(weights$street_name)))
+      expect_true(all(expected$total_score[c(1L, 2L, 6L)] < expected$total_score[3L]))
+    }
+  }
+})
+
+test_that("a genuinely wrong street no longer reaches total_score parity with an exact match", {
+  # This is the reported bug, reproduced directly: even on a short address
+  # (no flat/unit/building context) where a whole-address comparison
+  # wouldn't have enough context to catch it, score_street_name's own
+  # component-level reshaping (.component_similarity_factor()) does.
+  identical_fields <- make_pair("ROAD", "ROAD")
+  wrong_street <- make_pair("ROAD", "ROAD", in_street_name = "CERIUM", street_name = "TUCKEROO")
+  pairs <- rbindlist(list(identical_fields, wrong_street))
+  out <- gnafr:::.score_pairs(pairs)
+  expect_true(out$score_street_name[2] < out$score_street_name[1])
+  expect_true(out$total_score[2] < out$total_score[1])
+})
+
+test_that("reshaped street_name/suburb similarity agrees between R and DuckDB", {
+  pairs <- rbindlist(list(
+    make_pair("ROAD", "ROAD"),
+    make_pair("ROAD", "ROAD", in_street_name = "CERIUM", street_name = "TUCKEROO"),
+    make_pair("ROAD", "ROAD", in_locality = "BRISBANE", locality_name = "TOOWONG")
+  ))
+  r_scored <- gnafr:::.score_pairs(copy(pairs))
+  con <- gnaf_connect(":memory:")
+  on.exit(gnaf_disconnect(con), add = TRUE)
+  duckdb::duckdb_register(con, "reshape_pairs", pairs)
+  on.exit(duckdb::duckdb_unregister(con, "reshape_pairs"), add = TRUE)
+  expressions <- gnafr:::.score_sql_exprs(gnafr:::.default_match_weights(), i = "p", g = "p")
+  sql <- paste(sprintf("%s AS %s", expressions, names(expressions)), collapse = ", ")
+  sql_scored <- as.data.table(DBI::dbGetQuery(con, paste("SELECT", sql, "FROM reshape_pairs p")))
+  expect_equal(sql_scored$score_street_name, r_scored$score_street_name)
+  expect_equal(sql_scored$score_suburb, r_scored$score_suburb)
+  # Sanity check the reshaping actually did something on the two mismatched rows.
+  expect_true(all(r_scored$score_street_name[2] < r_scored$score_street_name[1]))
+  expect_true(all(r_scored$score_suburb[3] < r_scored$score_suburb[1]))
 })
