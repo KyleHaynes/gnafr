@@ -99,7 +99,7 @@
     code span.vs { color: #20794d; } /* VerbatimString */
     code span.wa { color: #5e5e5e; font-style: italic; } /* Warning */
   </style>
-  <link rel="stylesheet" href="gnafr-overview_files/libs/revealjs/dist/theme/quarto-643973fb017637f579281589e99389e0.css">
+  <link rel="stylesheet" href="gnafr-overview_files/libs/revealjs/dist/theme/quarto-0125c6af2f333a328c0a52158408778b.css">
   <link href="gnafr-overview_files/libs/revealjs/plugin/quarto-line-highlight/line-highlight.css" rel="stylesheet">
   <link href="gnafr-overview_files/libs/revealjs/plugin/reveal-menu/menu.css" rel="stylesheet">
   <link href="gnafr-overview_files/libs/revealjs/plugin/reveal-menu/quarto-menu.css" rel="stylesheet">
@@ -202,7 +202,7 @@
 
 <section id="title-slide" class="quarto-title-block center">
   <h1 class="title">gnafr</h1>
-  <p class="subtitle">Fast, fuzzy Australian address matching against the G-NAF</p>
+  <p class="subtitle">Flexible, transparent Australian address matching in R</p>
 
 <div class="quarto-title-authors">
 <div class="quarto-title-author">
@@ -216,17 +216,10 @@ Kyle Haynes
 </section>
 <section class="slide level2">
 
-<!--
-All R code in this deck is shown, never executed: every code block is a plain
-```r fence, so the deck renders with no G-NAF database present. Run the code
-live in RStudio at the two demo slides instead.
--->
 <aside class="notes">
 <ul>
-<li>Say: twenty minutes, two live demos, and I want your worst addresses at the end.</li>
-<li>Number / example: the G-NAF is ~15 million address records; the package matches against all of them from one file on disk.</li>
-<li>Watch out: this is a walkthrough, not a pitch. Shout if you want an address tried live.</li>
-<li>Transition: “It is one line of R. Here it is.”</li>
+<li>This began as a practical data-linkage problem, not an attempt to build another geocoder.</li>
+<li>Explain why it exists, where the judgement sits, how it works and how to use it.</li>
 </ul>
 <style type="text/css">
         span.MJX_Assistive_MathML {
@@ -240,23 +233,32 @@ live in RStudio at the two demo slides instead.
           display:block!important;
       }</style></aside>
 </section>
-<section id="one-line-in-one-data.table-out" class="slide level2">
-<h2>One line in, one data.table out</h2>
-<blockquote>
-<p>Messy free-text Australian addresses in. The best-matching <strong>G-NAF record</strong>, its <strong>coordinates</strong>, and a <strong>0-100 score broken down by component</strong> out.</p>
-</blockquote>
-<div class="code-copy-outer-scaffold"><div class="sourceCode" id="cb1"><pre class="sourceCode r code-with-copy"><code class="sourceCode r"><span id="cb1-1"><a href="" aria-hidden="true" tabindex="-1"></a>results <span class="ot">&lt;-</span> <span class="fu">gnaf_match</span>(dt<span class="sc">$</span>address, con)</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
-<ul>
-<li>The whole character vector goes in one call: one row or a few hundred thousand</li>
-<li>DuckDB holds the G-NAF on disk; the address table never enters R</li>
-<li>Every row carries the G-NAF PID, the label, the coordinates and the score breakdown</li>
-</ul>
+<section id="the-problem-i-needed-to-solve" class="slide level2">
+<h2>The problem I needed to solve</h2>
+<div class="statement">
+<p>I had large collections of Australian addresses that were <strong>almost right</strong> — and needed a repeatable way to connect them to an authoritative record.</p>
+</div>
+<div class="columns">
+<div class="column" style="width:31%;">
+<section id="messy-inputs" class="card">
+<h3>Messy inputs</h3>
+<p>Abbreviations, spelling errors, missing punctuation, old street names, wrong postcodes and partial addresses.</p>
+</section>
+</div><div class="column" style="width:31%;">
+<section id="bulk-work" class="card">
+<h3>Bulk work</h3>
+<p>Not an autocomplete box: hundreds of thousands of existing records processed together.</p>
+</section>
+</div><div class="column" style="width:31%;">
+<section id="explainable-decisions" class="card">
+<h3>Explainable decisions</h3>
+<p>A single “confidence” number was not enough. I needed to see <em>which parts</em> agreed.</p>
+</section>
+</div></div>
 <aside class="notes">
 <ul>
-<li>Say: the interface is boring on purpose. A vector in, a data.table out, one row per match.</li>
-<li>Number / example: 100k addresses in roughly 15-45 seconds on a laptop against QLD.</li>
-<li>Watch out: never <code>lapply()</code> this per row. The speed comes from scoring inside DuckDB in bulk.</li>
-<li>Transition: “The score is broken into components because there are two kinds of people in this room.”</li>
+<li>Use a real example: a legacy address with a typo and an old street name.</li>
+<li>Batch linkage and auditability drive almost every design choice in the package.</li>
 </ul>
 <style type="text/css">
         span.MJX_Assistive_MathML {
@@ -270,35 +272,129 @@ live in RStudio at the two demo slides instead.
           display:block!important;
       }</style></aside>
 </section>
-<section id="two-audiences-one-engine" class="slide level2">
-<h2>Two audiences, one engine</h2>
+<section id="there-were-useful-pieces-but-a-workflow-gap" class="slide level2">
+<h2>There were useful pieces, but a workflow gap</h2>
+<table class="caption-top">
+<colgroup>
+<col style="width: 33%">
+<col style="width: 33%">
+<col style="width: 33%">
+</colgroup>
+<thead>
+<tr class="header">
+<th>Existing approach</th>
+<th>Useful for</th>
+<th>What I still needed</th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<td>Hosted geocoding APIs</td>
+<td>Interactive lookup and managed infrastructure</td>
+<td>Local bulk processing without a per-request dependency</td>
+</tr>
+<tr class="even">
+<td>G-NAF import/manipulation tools</td>
+<td>Getting authoritative data into R</td>
+<td>Fuzzy matching, ranking and review as one pipeline</td>
+</tr>
+<tr class="odd">
+<td>Parsers and autocomplete services</td>
+<td>Structuring text or finding suggestions</td>
+<td>Component scores and reproducible acceptance rules</td>
+</tr>
+</tbody>
+</table>
+<div class="callout callout-note callout-style-simple">
+<div class="callout-body">
+<div class="callout-icon-container">
+<i class="callout-icon"></i>
+</div>
+<div class="callout-content">
+<p>The goal was not to claim there were no alternatives. It was to make a <strong>self-hosted, R-native, flexible matching workflow</strong> from input string to reviewable result.</p>
+</div>
+</div>
+</div>
+<p class="source">
+Sources: <a href="https://docs.geoscape.com.au/projects/gnaf_desc/en/stable/appendix_d.html">Geoscape G-NAF metadata</a>; <a href="https://github.com/KyleHaynes/gnaf.r">gnaf.r</a>; <a href="https://github.com/mountain-pass/addressr">Addressr</a>.
+</p>
+<aside class="notes">
+<ul>
+<li>Say “limited fit”, not “nothing exists”. There are adjacent R tools and self-hosted services.</li>
+<li>G-NAF is open data subject to the applicable licence, attribution and use restrictions.</li>
+</ul>
+<style type="text/css">
+        span.MJX_Assistive_MathML {
+          position:absolute!important;
+          clip: rect(1px, 1px, 1px, 1px);
+          padding: 1px 0 0 0!important;
+          border: 0!important;
+          height: 1px!important;
+          width: 1px!important;
+          overflow: hidden!important;
+          display:block!important;
+      }</style></aside>
+</section>
+<section id="gnafr-in-one-sentence" class="slide level2">
+<h2><code>gnafr</code> in one sentence</h2>
+<div class="hero">
+<p><strong>A character vector goes in.</strong></p>
+<p><strong>A scored, geocoded <code>data.table</code> comes out.</strong></p>
+</div>
+<div class="code-copy-outer-scaffold"><div class="sourceCode" id="cb1"><pre class="sourceCode r code-with-copy"><code class="sourceCode r"><span id="cb1-1"><a href="" aria-hidden="true" tabindex="-1"></a>results <span class="ot">&lt;-</span> <span class="fu">gnaf_match</span>(customer<span class="sc">$</span>address, con)</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
+<div class="output-strip">
+<p>input → standardised input → matched G-NAF label → PID → coordinates → component scores</p>
+</div>
+<ul>
+<li>Uses the G-NAF data you choose to load</li>
+<li>Runs matching in bulk inside DuckDB</li>
+<li>Keeps unmatched inputs in the result</li>
+<li>Returns the evidence needed to decide what “good enough” means</li>
+</ul>
+<aside class="notes">
+<ul>
+<li>The interface is deliberately small: vector plus connection.</li>
+<li>One input can return several candidates with <code>max_results</code>; unmatched rows are retained.</li>
+</ul>
+<style type="text/css">
+        span.MJX_Assistive_MathML {
+          position:absolute!important;
+          clip: rect(1px, 1px, 1px, 1px);
+          padding: 1px 0 0 0!important;
+          border: 0!important;
+          height: 1px!important;
+          width: 1px!important;
+          overflow: hidden!important;
+          display:block!important;
+      }</style></aside>
+</section>
+<section id="what-it-does-and-what-it-does-not" class="slide level2">
+<h2>What it does — and what it does not</h2>
 <div class="columns">
 <div class="column" style="width:48%;">
-<h3 id="high-precision"><span class="precision">High precision</span></h3>
-<p>“I need to know <strong>this exact dwelling</strong>.”</p>
+<h3 id="it-does">It does</h3>
 <ul>
-<li>A wrong match is worse than no match</li>
-<li>Unit-level correctness, record linkage, counts by address</li>
-<li>Wants: high <code>min_score</code>, flat weight up, aliases resolved, a review queue</li>
+<li>Parse and standardise Australian address text</li>
+<li>Search core, alias and custom address records</li>
+<li>Score six address components</li>
+<li>Return PIDs, labels, coordinates and relationships</li>
+<li>Cache strong repeat matches</li>
+<li>Support interactive review and threshold selection</li>
 </ul>
 </div><div class="column" style="width:48%;">
-<h3 id="normalisation"><span class="normalise">Normalisation</span></h3>
-<p>“I need a <strong>clean consistent string</strong> - and roughly the right spot.”</p>
+<h3 id="it-does-not">It does not</h3>
 <ul>
-<li>Coverage beats precision</li>
-<li>Street or suburb level is fine</li>
-<li>Wants: low <code>min_score</code>, street-only fallback on, <code>address_label</code> as the output</li>
+<li>Confirm that an address can receive mail</li>
+<li>Turn the score into a probability of correctness</li>
+<li>Guarantee a match when key evidence is absent</li>
+<li>Hide uncertainty behind one opaque result</li>
+<li>Replace domain-specific validation or labelled evaluation</li>
 </ul>
 </div></div>
-<p class="dim">
-Same code path. Different arguments. I will tag slides as we go.
-</p>
 <aside class="notes">
 <ul>
-<li>Say: this split is the thread for the whole talk; every knob makes sense once you know which side you are on.</li>
-<li>Number / example: a wrong unit number is a real error for linkage; one house off is survivable for normalisation.</li>
-<li>Watch out: you do not need two pipelines. One run can serve both, which is the closing slide.</li>
-<li>Transition: “Both start from the same file, which you build once.”</li>
+<li>“Matched to G-NAF” and “deliverable postal address” are different claims.</li>
+<li>The package cannot know the cost of a false positive in the user’s project.</li>
 </ul>
 <style type="text/css">
         span.MJX_Assistive_MathML {
@@ -312,24 +408,68 @@ Same code path. Different arguments. I will tag slides as we go.
           display:block!important;
       }</style></aside>
 </section>
-<section id="build-the-database-once" class="slide level2">
-<h2>Build the database once</h2>
-<div class="code-copy-outer-scaffold"><div class="sourceCode" id="cb2"><pre class="sourceCode r code-with-copy"><code class="sourceCode r"><span id="cb2-1"><a href="" aria-hidden="true" tabindex="-1"></a><span class="fu">library</span>(gnafr)</span>
-<span id="cb2-2"><a href="" aria-hidden="true" tabindex="-1"></a>con <span class="ot">&lt;-</span> <span class="fu">gnaf_connect</span>(<span class="st">"C:/temp/gnaf.duckdb"</span>)</span>
-<span id="cb2-3"><a href="" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb2-4"><a href="" aria-hidden="true" tabindex="-1"></a><span class="fu">gnaf_build_db</span>(con, <span class="at">gnaf_dir =</span> <span class="st">"C:/temp/G-NAF MAY 2026/Standard"</span>,</span>
-<span id="cb2-5"><a href="" aria-hidden="true" tabindex="-1"></a>              <span class="at">states =</span> <span class="fu">c</span>(<span class="st">"QLD"</span>, <span class="st">"NSW"</span>))   <span class="co"># or "all"</span></span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
-<ul>
-<li>The free <strong>G-NAF Standard</strong> PSV product from Geoscape; it carries the official alias tables</li>
-<li>One call runs <code>gnaf_init()</code>, <code>gnaf_load_psv()</code>, <code>gnaf_build_street_aliases()</code> and prints <code>gnaf_status()</code></li>
-<li>Result: a single DuckDB file. Copy it, share it, open it read-only from many sessions</li>
-</ul>
+<section id="one-engine-different-definitions-of-success" class="slide level2">
+<h2>One engine, different definitions of success</h2>
+<div class="spectrum">
+<div>
+<strong>Higher precision</strong><br><span>Exact dwelling matters</span>
+</div>
+<div class="spectrum-line">
+
+</div>
+<div>
+<strong>Higher coverage</strong><br><span>A usable location is enough</span>
+</div>
+</div>
+<table class="caption-top">
+<colgroup>
+<col style="width: 33%">
+<col style="width: 33%">
+<col style="width: 33%">
+</colgroup>
+<thead>
+<tr class="header">
+<th>Control</th>
+<th>Towards precision</th>
+<th>Towards coverage</th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<td><code>min_score</code></td>
+<td>Raise the acceptance bar</td>
+<td>Admit weaker candidates</td>
+</tr>
+<tr class="even">
+<td><code>max_results</code></td>
+<td>Review alternatives</td>
+<td>Return one best candidate</td>
+</tr>
+<tr class="odd">
+<td><code>weights</code></td>
+<td>Emphasise number / flat</td>
+<td>Emphasise street / locality</td>
+</tr>
+<tr class="even">
+<td>aliases</td>
+<td>Inspect or restrict types</td>
+<td>Search all available aliases</td>
+</tr>
+<tr class="odd">
+<td><code>street_only_fallback</code></td>
+<td>Usually off</td>
+<td>Match at street level when useful</td>
+</tr>
+<tr class="even">
+<td>principal / primary</td>
+<td>Resolve the entity needed</td>
+<td>Keep the label that best matched</td>
+</tr>
+</tbody>
+</table>
 <aside class="notes">
 <ul>
-<li>Say: this is minutes of work, once per G-NAF release, not part of anyone’s daily run.</li>
-<li>Number / example: after the build, alias rows are the majority of the table; locality synonyms alone are most of it.</li>
-<li>Watch out: <code>gnaf_load()</code> takes the simpler G-NAF Core CSV but you lose the official aliases.</li>
-<li>Transition: “Here is what sits around that file.”</li>
+<li>There is no universal threshold. The cost of a false match determines the settings.</li>
 </ul>
 <style type="text/css">
         span.MJX_Assistive_MathML {
@@ -343,41 +483,37 @@ Same code path. Different arguments. I will tag slides as we go.
           display:block!important;
       }</style></aside>
 </section>
-<section id="the-package-in-two-phases" class="slide level2">
-<h2>The package, in two phases</h2>
-<div class="cell" data-reveal="true" data-fig-width="12" data-fig-height="4.5" data-layout-align="center">
-<div class="cell-output-display">
-<div>
-<p></p><figure class=""><p></p>
-<div>
-<pre class="mermaid mermaid-js">%%{init: {'themeVariables': {'fontSize': '16px'}}}%%
-flowchart LR
-  subgraph B["build once"]
-    A["G-NAF PSV&lt;br/&gt;Geoscape"] --&gt; C["gnaf_build_db()"]
-    C --&gt; D[("gnaf.duckdb&lt;br/&gt;+ aliases")]
-  end
-  subgraph R["every run"]
-    E["messy&lt;br/&gt;addresses"] --&gt; F["gnaf_match()"]
-    F --&gt; G["data.table&lt;br/&gt;scores + coords"]
-    G --&gt; H["gnaf_app()&lt;br/&gt;threshold_filter()"]
-    G --&gt; I["geographies&lt;br/&gt;spatial_lookup()"]
-  end
-  D -.-&gt; F
-</pre>
+<section id="more-than-string-matching" class="slide level2">
+<h2>More than string matching</h2>
+<div class="capability-grid">
+<section id="build" class="card">
+<h3>Build</h3>
+<p><code>gnaf_build_db()</code> loads G-NAF Standard, aliases, indexes and street-level records.</p>
+</section>
+<section id="match" class="card">
+<h3>Match</h3>
+<p><code>gnaf_match()</code> parses, searches, scores, ranks and geocodes in bulk.</p>
+</section>
+<section id="extend" class="card">
+<h3>Extend</h3>
+<p><code>gnaf_add()</code> brings internal or operational addresses into the same search.</p>
+</section>
+<section id="resolve" class="card">
+<h3>Resolve</h3>
+<p>Principal, primary and alias fields distinguish a matched spelling from the dwelling or property.</p>
+</section>
+<section id="enrich" class="card">
+<h3>Enrich</h3>
+<p>Saved geographies append SA2, LGA or other polygon attributes.</p>
+</section>
+<section id="review" class="card">
+<h3>Review</h3>
+<p>Shiny and static diff views expose scores and generate filter code.</p>
+</section>
 </div>
-<p></p></figure><p></p>
-</div>
-</div>
-</div>
-<p class="dim">
-Dotted line: candidate generation, scoring and ranking all run inside DuckDB.
-</p>
 <aside class="notes">
 <ul>
-<li>Say: left box happens once, right box happens every run, and the only thing joining them is the file.</li>
-<li>Number / example: <code>gnaf_match()</code> scores millions of candidate pairs in the database and only the top-ranked rows come back to R, wide.</li>
-<li>Watch out: everything downstream (review app, threshold filter, geographies) works on that one data.table; nothing needs the database again except the geographies join.</li>
-<li>Transition: “So what actually happens inside <code>gnaf_match()</code>?”</li>
+<li>“Extend” covers PLI or service-address records that are valid internally but absent from G-NAF.</li>
 </ul>
 <style type="text/css">
         span.MJX_Assistive_MathML {
@@ -391,41 +527,24 @@ Dotted line: candidate generation, scoring and ranking all run inside DuckDB.
           display:block!important;
       }</style></aside>
 </section>
-<section id="how-a-match-is-found" class="slide level2">
-<h2>How a match is found</h2>
-<div class="cell" data-reveal="true" data-fig-width="12" data-fig-height="4.5" data-layout-align="center">
-<div class="cell-output-display">
-<div>
-<p></p><figure class=""><p></p>
-<div>
-<pre class="mermaid mermaid-js">%%{init: {'themeVariables': {'fontSize': '16px'}}}%%
-flowchart LR
-  A["exact label&lt;br/&gt;or cache"] --&gt;|miss| B["address_parse()"]
-  A --&gt;|hit| Z["score, rank&lt;br/&gt;return"]
-  B --&gt;|postcode| C["postcode join&lt;br/&gt;hot path"]
-  B --&gt;|no postcode| D["state-wide&lt;br/&gt;search"]
-  C --&gt; E{"weak?&lt;br/&gt;score &lt;= 90"}
-  D --&gt; E
-  E --&gt;|no| Z
-  E --&gt;|yes| F["locality fallback&lt;br/&gt;+ alias search"]
-  F --&gt; G["street-only&lt;br/&gt;opt-in"]
-  G --&gt; Z
-</pre>
+<section id="give-it-the-address-you-actually-have" class="slide level2">
+<h2>Give it the address you actually have</h2>
+<h3 id="best-input">Best input</h3>
+<pre class="text"><code>UNIT 2 16 WALLY STREET, NUNDAH QLD 4012</code></pre>
+<div class="input-parts">
+<p><span>unit / level</span><span>street number</span><span>street name + type</span><span>suburb</span><span>state</span><span>postcode</span></p>
 </div>
-<p></p></figure><p></p>
-</div>
-</div>
-</div>
+<h3 id="minimal-preparation-is-better">Minimal preparation is better</h3>
 <ul>
-<li>Most inputs stop at the postcode join: a cheap equi-join, then scoring</li>
-<li>The expensive paths only run on the residue, so time scales with messiness, not row count</li>
+<li>Keep useful evidence: unit, building, street number, suburb, state and postcode</li>
+<li>Remove fields that are not part of the address: customer IDs, names and notes</li>
+<li>Do not spend time uppercasing, expanding <code>Rd</code>, or removing punctuation</li>
+<li>Do not split into columns first unless the source is already structured</li>
 </ul>
 <aside class="notes">
 <ul>
-<li>Say: it is a cascade. Each input drops out as soon as something is confident about it.</li>
-<li>Number / example: “weak” means the best candidate scored at or below <code>fallback_threshold</code>, default 90; a coincidental right-number-wrong-street match lands in the low 80s, which is exactly what the fallback is for.</li>
-<li>Watch out: the parser does the abbreviation work up front, so “Rd”, “ROAD” and “Rd.” all reach the join as ROAD.</li>
-<li>Transition: “That leaves the question of what the score actually means.”</li>
+<li>The parser handles case, punctuation and common abbreviations. Over-cleaning can discard evidence.</li>
+<li>Better addresses are also faster: postcode, state and number make candidate retrieval cheaper.</li>
 </ul>
 <style type="text/css">
         span.MJX_Assistive_MathML {
@@ -439,80 +558,352 @@ flowchart LR
           display:block!important;
       }</style></aside>
 </section>
-<section id="reading-the-score" class="slide level2">
-<h2>Reading the score</h2>
+<section id="why-duckdb" class="slide level2">
+<h2>Why DuckDB?</h2>
 <div class="columns">
-<div class="column" style="width:46%;">
+<div class="column" style="width:57%;">
+<div class="big-number">
+<p>one file</p>
+</div>
+<div class="code-copy-outer-scaffold"><div class="sourceCode" id="cb3"><pre class="sourceCode r code-with-copy"><code class="sourceCode r"><span id="cb3-1"><a href="" aria-hidden="true" tabindex="-1"></a>con <span class="ot">&lt;-</span> <span class="fu">gnaf_connect</span>(<span class="st">"C:/data/gnaf.duckdb"</span>)</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
+<ul>
+<li>Persistent: build once, reuse across R sessions</li>
+<li>Embedded: no database server to administer</li>
+<li>Fast columnar scans, joins and window functions</li>
+<li>SQL scores candidates before results enter R</li>
+<li>Portable across machines and DuckDB clients</li>
+</ul>
+</div><div class="column" style="width:39%;">
+<div class="cell" data-reveal="true" data-fig-height="4.8" data-layout-align="center">
+<div class="cell-output-display">
+<div>
+<p></p><figure class=""><p></p>
+<div>
+<pre class="mermaid mermaid-js">flowchart TB
+  R["R&lt;br/&gt;parsed inputs"] --&gt;|register batch| D[("DuckDB")]
+  G["G-NAF&lt;br/&gt;millions of rows"] --&gt; D
+  D --&gt;|top candidates only| O["data.table"]
+</pre>
+</div>
+<p></p></figure><p></p>
+</div>
+</div>
+</div>
+</div></div>
+<aside class="notes">
+<ul>
+<li>The national address table never needs to become an R object.</li>
+<li>Keep one connection open across calls in an app or service.</li>
+</ul>
+<style type="text/css">
+        span.MJX_Assistive_MathML {
+          position:absolute!important;
+          clip: rect(1px, 1px, 1px, 1px);
+          padding: 1px 0 0 0!important;
+          border: 0!important;
+          height: 1px!important;
+          width: 1px!important;
+          overflow: hidden!important;
+          display:block!important;
+      }</style></aside>
+</section>
+<section id="build-once-use-many-times" class="slide level2">
+<h2>Build once, use many times</h2>
+<div class="cell" data-reveal="true" data-fig-height="4.9" data-layout-align="center">
+<div class="cell-output-display">
+<div>
+<p></p><figure class=""><p></p>
+<div>
+<pre class="mermaid mermaid-js">%%{init: {'themeVariables': {'fontSize': '17px'}}}%%
+flowchart LR
+  subgraph BUILD["BUILD / REFRESH"]
+    A["G-NAF Standard&lt;br/&gt;PSV files"] --&gt; B["gnaf_build_db()"]
+    X["Internal addresses&lt;br/&gt;e.g. PLI"] --&gt; C["gnaf_add()"]
+    B --&gt; D[("gnaf.duckdb")]
+    C --&gt; D
+    P["SA2 / LGA&lt;br/&gt;polygons"] --&gt; E["gnaf_add_geography()"] --&gt; D
+  end
+  subgraph USE["EVERY MATCHING RUN"]
+    I["address vector"] --&gt; M["gnaf_match()"] --&gt; O["scored data.table"]
+    O --&gt; V["review / filter / join"]
+  end
+  D -.-&gt; M
+</pre>
+</div>
+<p></p></figure><p></p>
+</div>
+</div>
+</div>
+<aside class="notes">
+<ul>
+<li>Refresh when a new G-NAF release or internal-address extract matters.</li>
+<li>A prepared file can be opened read-only by downstream users.</li>
+</ul>
+<style type="text/css">
+        span.MJX_Assistive_MathML {
+          position:absolute!important;
+          clip: rect(1px, 1px, 1px, 1px);
+          padding: 1px 0 0 0!important;
+          border: 0!important;
+          height: 1px!important;
+          width: 1px!important;
+          overflow: hidden!important;
+          display:block!important;
+      }</style></aside>
+</section>
+<section id="what-the-database-build-creates" class="slide level2">
+<h2>What the database build creates</h2>
+<div class="code-copy-outer-scaffold"><div class="sourceCode" id="cb4"><pre class="sourceCode r code-with-copy"><code class="sourceCode r"><span id="cb4-1"><a href="" aria-hidden="true" tabindex="-1"></a>con <span class="ot">&lt;-</span> <span class="fu">gnaf_connect</span>(<span class="st">"C:/data/gnaf.duckdb"</span>)</span>
+<span id="cb4-2"><a href="" aria-hidden="true" tabindex="-1"></a><span class="fu">gnaf_build_db</span>(</span>
+<span id="cb4-3"><a href="" aria-hidden="true" tabindex="-1"></a>  con,</span>
+<span id="cb4-4"><a href="" aria-hidden="true" tabindex="-1"></a>  <span class="at">gnaf_dir =</span> <span class="st">"C:/data/G-NAF AUGUST 2026/Standard"</span>,</span>
+<span id="cb4-5"><a href="" aria-hidden="true" tabindex="-1"></a>  <span class="at">states =</span> <span class="st">"all"</span></span>
+<span id="cb4-6"><a href="" aria-hidden="true" tabindex="-1"></a>)</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
+<div class="cell" data-reveal="true" data-fig-height="3.5" data-layout-align="center">
+<div class="cell-output-display">
+<div>
+<p></p><figure class=""><p></p>
+<div>
+<pre class="mermaid mermaid-js">flowchart LR
+  A["create / migrate&lt;br/&gt;schema"] --&gt; B["load core&lt;br/&gt;addresses"]
+  B --&gt; C["load locality,&lt;br/&gt;street + address aliases"]
+  C --&gt; D["build locality&lt;br/&gt;index"]
+  D --&gt; E["build number-free&lt;br/&gt;street records"]
+  E --&gt; F["analyse +&lt;br/&gt;report status"]
+</pre>
+</div>
+<p></p></figure><p></p>
+</div>
+</div>
+</div>
+<p class="source">
+G-NAF Standard is distributed as PSV files through <a href="https://data.gov.au/data/dataset/geocoded-national-address-file-g-naf">data.gov.au</a>. Check the licence and use restrictions applying to your download.
+</p>
+<aside class="notes">
+<ul>
+<li>Standard is preferred when aliases matter. <code>gnaf_load()</code> also accepts flattened G-NAF Core CSV.</li>
+<li>Limit <code>states</code> when the project only needs specific jurisdictions.</li>
+</ul>
+<style type="text/css">
+        span.MJX_Assistive_MathML {
+          position:absolute!important;
+          clip: rect(1px, 1px, 1px, 1px);
+          padding: 1px 0 0 0!important;
+          border: 0!important;
+          height: 1px!important;
+          width: 1px!important;
+          overflow: hidden!important;
+          display:block!important;
+      }</style></aside>
+</section>
+<section id="inside-gnaf_match" class="slide level2">
+<h2>Inside <code>gnaf_match()</code></h2>
+<div class="cell" data-reveal="true" data-fig-height="5" data-layout-align="center">
+<div class="cell-output-display">
+<div>
+<p></p><figure class=""><p></p>
+<div>
+<pre class="mermaid mermaid-js">%%{init: {'themeVariables': {'fontSize': '17px'}}}%%
+flowchart LR
+  A["raw address"] --&gt; B["parse +&lt;br/&gt;standardise"]
+  B --&gt; C{"fast path?"}
+  C --&gt;|exact / cache| G["rank + return"]
+  C --&gt;|postcode| D["postcode +&lt;br/&gt;number block"]
+  C --&gt;|state only| E["state +&lt;br/&gt;number block"]
+  D --&gt; F["component&lt;br/&gt;scoring"]
+  E --&gt; F
+  F --&gt; H{"weak locality&lt;br/&gt;or unmatched?"}
+  H --&gt;|yes| I["locality →&lt;br/&gt;postcode fallback"] --&gt; J["re-score"] --&gt; G
+  H --&gt;|no| G
+  G --&gt; K["principal / primary&lt;br/&gt;+ geographies"]
+</pre>
+</div>
+<p></p></figure><p></p>
+</div>
+</div>
+</div>
+<aside class="notes">
+<ul>
+<li>The key idea is progressive narrowing: cheap structure first, expensive string comparison later.</li>
+<li>Street-only fallback is an optional final path omitted here for readability.</li>
+</ul>
+<style type="text/css">
+        span.MJX_Assistive_MathML {
+          position:absolute!important;
+          clip: rect(1px, 1px, 1px, 1px);
+          padding: 1px 0 0 0!important;
+          border: 0!important;
+          height: 1px!important;
+          width: 1px!important;
+          overflow: hidden!important;
+          display:block!important;
+      }</style></aside>
+</section>
+<section id="step-1-parse-and-standardise" class="slide level2">
+<h2>Step 1 — parse and standardise</h2>
+<div class="code-copy-outer-scaffold"><div class="sourceCode" id="cb5"><pre class="sourceCode r code-with-copy"><code class="sourceCode r"><span id="cb5-1"><a href="" aria-hidden="true" tabindex="-1"></a><span class="fu">address_parse</span>(<span class="st">"U 2, 16 wally st nundah qld 4012"</span>)</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
+<table class="caption-top">
+<thead>
+<tr class="header">
+<th>Raw evidence</th>
+<th>Parsed component</th>
+<th>Standardised value</th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<td><code>U 2</code></td>
+<td>flat type / number</td>
+<td><code>UNIT</code>, <code>2</code></td>
+</tr>
+<tr class="even">
+<td><code>16</code></td>
+<td>street number</td>
+<td><code>16</code></td>
+</tr>
+<tr class="odd">
+<td><code>wally st</code></td>
+<td>street name / type</td>
+<td><code>WALLY</code>, <code>STREET</code></td>
+</tr>
+<tr class="even">
+<td><code>nundah</code></td>
+<td>locality</td>
+<td><code>NUNDAH</code></td>
+</tr>
+<tr class="odd">
+<td><code>qld 4012</code></td>
+<td>state / postcode</td>
+<td><code>QLD</code>, <code>4012</code></td>
+</tr>
+</tbody>
+</table>
+<div class="output-strip">
+<p>UNIT 2 16 WALLY STREET NUNDAH QLD 4012</p>
+</div>
+<ul>
+<li>Standardisation creates reliable join keys; it does not decide the match</li>
+<li>Raw and standardised inputs both remain in the output</li>
+</ul>
+<aside class="notes">
+<ul>
+<li>Parsing is deterministic preparation. Fuzzy similarity belongs in scoring.</li>
+<li>A missing or misparsed number also widens candidate retrieval.</li>
+</ul>
+<style type="text/css">
+        span.MJX_Assistive_MathML {
+          position:absolute!important;
+          clip: rect(1px, 1px, 1px, 1px);
+          padding: 1px 0 0 0!important;
+          border: 0!important;
+          height: 1px!important;
+          width: 1px!important;
+          overflow: hidden!important;
+          display:block!important;
+      }</style></aside>
+</section>
+<section id="step-2-find-plausible-candidates" class="slide level2">
+<h2>Step 2 — find plausible candidates</h2>
+<div class="cell" data-reveal="true" data-fig-height="4.5" data-layout-align="center">
+<div class="cell-output-display">
+<div>
+<p></p><figure class=""><p></p>
+<div>
+<pre class="mermaid mermaid-js">flowchart TB
+  A{"What reliable&lt;br/&gt;location exists?"}
+  A --&gt;|postcode| B["same postcode"]
+  A --&gt;|state only| C["same state"]
+  A --&gt;|weak locality| D["fuzzy locality&lt;br/&gt;finds postcodes"]
+  B --&gt; E["number / lot / range block"]
+  C --&gt; E
+  D --&gt; E
+  E --&gt; F["street-score upper bound"]
+  F --&gt; G["fully score survivors"]
+</pre>
+</div>
+<p></p></figure><p></p>
+</div>
+</div>
+</div>
+<div class="callout callout-important callout-style-simple">
+<div class="callout-body">
+<div class="callout-icon-container">
+<i class="callout-icon"></i>
+</div>
+<div class="callout-content">
+<p>Candidate retrieval determines both <strong>speed</strong> and <strong>recall</strong>. A correct record removed here cannot be rescued by scoring.</p>
+</div>
+</div>
+</div>
+<aside class="notes">
+<ul>
+<li>Postcode and house number contribute score and prevent enormous comparisons.</li>
+<li>Locality fallback is broader, so it only runs for the residue.</li>
+</ul>
+<style type="text/css">
+        span.MJX_Assistive_MathML {
+          position:absolute!important;
+          clip: rect(1px, 1px, 1px, 1px);
+          padding: 1px 0 0 0!important;
+          border: 0!important;
+          height: 1px!important;
+          width: 1px!important;
+          overflow: hidden!important;
+          display:block!important;
+      }</style></aside>
+</section>
+<section id="step-3-score-agreement-by-component" class="slide level2">
+<h2>Step 3 — score agreement by component</h2>
+<div class="columns">
+<div class="column" style="width:43%;">
 <table class="caption-top">
 <thead>
 <tr class="header">
 <th>Component</th>
-<th>Weight</th>
+<th style="text-align: right;">Default weight</th>
 </tr>
 </thead>
 <tbody>
 <tr class="odd">
 <td>Street name</td>
-<td>40</td>
+<td style="text-align: right;">40</td>
 </tr>
 <tr class="even">
 <td>Postcode</td>
-<td>20</td>
+<td style="text-align: right;">20</td>
 </tr>
 <tr class="odd">
 <td>Suburb</td>
-<td>15</td>
+<td style="text-align: right;">15</td>
 </tr>
 <tr class="even">
-<td>Street type</td>
-<td>10</td>
+<td>Street type / direction</td>
+<td style="text-align: right;">10</td>
 </tr>
 <tr class="odd">
-<td>Number</td>
-<td>10</td>
+<td>Number / range / lot</td>
+<td style="text-align: right;">10</td>
 </tr>
 <tr class="even">
 <td>Flat / level</td>
-<td>5</td>
+<td style="text-align: right;">5</td>
 </tr>
 </tbody>
 </table>
-</div><div class="column" style="width:54%;">
-<table class="caption-top">
-<thead>
-<tr class="header">
-<th>Total</th>
-<th>Read it as</th>
-</tr>
-</thead>
-<tbody>
-<tr class="odd">
-<td><strong>90-100</strong></td>
-<td>All components agree</td>
-</tr>
-<tr class="even">
-<td><strong>75-89</strong></td>
-<td>Minor spelling variation</td>
-</tr>
-<tr class="odd">
-<td><strong>60-74</strong></td>
-<td>One real discrepancy</td>
-</tr>
-<tr class="even">
-<td><strong>&lt; 60</strong></td>
-<td>Dropped by default (<code>min_score = 60</code>)</td>
-</tr>
-</tbody>
-</table>
-<p><code>95 = 20 + 15 + 40 + 10 + 10 + 0</code> - everything right, flat missing.</p>
+</div><div class="column" style="width:53%;">
+<div class="score-card">
+<p><span>Postcode</span><strong>20 / 20</strong> <span>Suburb</span><strong>15 / 15</strong> <span>Street name</span><strong>36 / 40</strong> <span>Street type</span><strong>10 / 10</strong> <span>Number</span><strong>10 / 10</strong> <span>Flat</span><strong>0 / 5</strong> <span class="score-total">Total</span><strong class="score-total">91 / 100</strong></p>
+</div>
 </div></div>
-<p><span class="precision">Precision</span>: read the components, not just the total. <span class="normalise">Normalisation</span>: <code>min_score = 40</code> is a fine bar.</p>
+<ul>
+<li>Similar text earns partial credit; conflicting or missing components lose credit</li>
+<li><code>total_score</code> is weighted agreement, <strong>not a calibrated probability</strong></li>
+<li>Custom <code>weights</code> must sum to 100</li>
+</ul>
 <aside class="notes">
 <ul>
-<li>Say: the total is a sum of agreements, not a probability. Two 85s can mean very different things.</li>
-<li>Number / example: postcode + suburb + number + type agreeing with the wrong street is 55 before any street-name credit; the street name is what carries the match.</li>
-<li>Watch out: the bands are guidance. Calibrate on a labelled sample of your own data, and note that custom <code>weights</code> bypass the match cache.</li>
-<li>Transition: “Easier to show than to explain.”</li>
+<li>Read components before interpreting the total. Two 85s can describe different risks.</li>
+<li>Calibrate on labelled examples from the intended population.</li>
 </ul>
 <style type="text/css">
         span.MJX_Assistive_MathML {
@@ -526,85 +917,50 @@ flowchart LR
           display:block!important;
       }</style></aside>
 </section>
-<section id="section" class="slide level2" data-background-color="#12405c">
-<h2></h2>
-<h3 class="dim" id="live-demo-1---scores">Live demo 1 - scores</h3>
-<div class="code-copy-outer-scaffold"><div class="sourceCode" id="cb3"><pre class="sourceCode r code-with-copy"><code class="sourceCode r"><span id="cb3-1"><a href="" aria-hidden="true" tabindex="-1"></a><span class="co"># Full breakdown for one messy address</span></span>
-<span id="cb3-2"><a href="" aria-hidden="true" tabindex="-1"></a><span class="fu">gnaf_match</span>(<span class="st">"unit 110 120 musgrave Road red hill 4000 QLD"</span>, con)[</span>
-<span id="cb3-3"><a href="" aria-hidden="true" tabindex="-1"></a>  , .(address_label, total_score, score_postcode, score_suburb,</span>
-<span id="cb3-4"><a href="" aria-hidden="true" tabindex="-1"></a>      score_street_name, score_street_type, score_number, score_flat)]</span>
-<span id="cb3-5"><a href="" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb3-6"><a href="" aria-hidden="true" tabindex="-1"></a><span class="co"># Wrong street type: Avenue typed, Drive in G-NAF</span></span>
-<span id="cb3-7"><a href="" aria-hidden="true" tabindex="-1"></a><span class="fu">gnaf_match</span>(<span class="st">"13 Fairway Avenue, Clear Island Waters QLD 4226"</span>, con,</span>
-<span id="cb3-8"><a href="" aria-hidden="true" tabindex="-1"></a>           <span class="at">min_score =</span> <span class="dv">0</span>)[, .(address_label, total_score, score_street_type)]</span>
-<span id="cb3-9"><a href="" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb3-10"><a href="" aria-hidden="true" tabindex="-1"></a><span class="co"># A number that does not exist on the street stays unmatched</span></span>
-<span id="cb3-11"><a href="" aria-hidden="true" tabindex="-1"></a><span class="fu">gnaf_match</span>(<span class="st">"999 Musgrave Road, Red Hill QLD 4059"</span>, con, <span class="at">min_score =</span> <span class="dv">0</span>)</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
-<aside class="notes">
-<ul>
-<li>Say: run these three in order and read the component numbers aloud.</li>
-<li>Number / example: the first one shows postcode fallback fixing 4000 to 4059 with the suburb; the second shows street type costing exactly its weight.</li>
-<li>Watch out: the money shot is the third one: even at <code>min_score = 0</code> a non-existent number is not forced onto a neighbour.</li>
-<li>Transition: “Everything that just happened past the postcode join is fallbacks and aliases.”</li>
-</ul>
-<style type="text/css">
-        span.MJX_Assistive_MathML {
-          position:absolute!important;
-          clip: rect(1px, 1px, 1px, 1px);
-          padding: 1px 0 0 0!important;
-          border: 0!important;
-          height: 1px!important;
-          width: 1px!important;
-          overflow: hidden!important;
-          display:block!important;
-      }</style></aside>
-</section>
-<section id="fallbacks-and-aliases" class="slide level2">
-<h2>Fallbacks and aliases</h2>
-<ul>
-<li><strong>Locality fallback</strong>: best score &lt;= 90 and the suburb disagrees, so the suburb name is fuzzy-matched to recover the right postcode and the input is re-scored</li>
-<li><strong>Deferred alias search</strong>: street and address aliases when the street name is weak; locality aliases when the locality is weak</li>
-<li><strong>Street-only fallback</strong>: <code>street_only_fallback = TRUE</code> matches number-free inputs to a street (needs <code>gnaf_build_street_aliases()</code>)</li>
-</ul>
+<section id="better-addresses-are-faster-addresses" class="slide level2">
+<h2>Better addresses are faster addresses</h2>
+<div class="columns">
+<div class="column" style="width:48%;">
+<h3 id="cheap-path">Cheap path</h3>
+<p><code>10 MAIN ROAD, BRISBANE QLD 4000</code></p>
+<p>postcode + number → tight candidates → score → stop</p>
+<div class="metric good">
+<p>More structure<br><strong>less database work</strong></p>
+</div>
+</div><div class="column" style="width:48%;">
+<h3 id="expensive-path">Expensive path</h3>
+<p><code>MAIN RD BRISBANE</code></p>
+<p>state/locality search → broad candidates → fallback → more scoring</p>
+<div class="metric warn">
+<p>Less structure<br><strong>more database work</strong></p>
+</div>
+</div></div>
+<p><strong>A deliberately difficult benchmark:</strong> 100,001 perturbed addresses, cache disabled</p>
 <table class="caption-top">
-<colgroup>
-<col style="width: 50%">
-<col style="width: 50%">
-</colgroup>
 <thead>
 <tr class="header">
-<th><code>alias_type</code></th>
-<th>Meaning</th>
+<th style="text-align: right;">Parse + standardise</th>
+<th style="text-align: right;">Postcode scoring</th>
+<th style="text-align: right;">Locality fallback</th>
+<th style="text-align: right;">Total</th>
 </tr>
 </thead>
 <tbody>
 <tr class="odd">
-<td><code>LOCALITY:SYN</code>, <code>LOCALITY:SR</code></td>
-<td>Suburb synonyms and street-in-suburb references (the bulk of alias rows)</td>
-</tr>
-<tr class="even">
-<td><code>STREET:SYN</code>, <code>STREET:ALT</code></td>
-<td>Street renamed or spelt differently</td>
-</tr>
-<tr class="odd">
-<td><code>ADDRESS:SYN</code>, <code>ADDRESS:RA</code></td>
-<td>The same dwelling under another address or number range</td>
-</tr>
-<tr class="even">
-<td><code>street_only</code></td>
-<td>Built by gnafr for the street-level fallback</td>
+<td style="text-align: right;">7.0 s</td>
+<td style="text-align: right;">656.5 s</td>
+<td style="text-align: right;">215.5 s</td>
+<td style="text-align: right;"><strong>886.1 s</strong></td>
 </tr>
 </tbody>
 </table>
-<div class="code-copy-outer-scaffold"><div class="sourceCode" id="cb4"><pre class="sourceCode r code-with-copy"><code class="sourceCode r"><span id="cb4-1"><a href="" aria-hidden="true" tabindex="-1"></a><span class="fu">gnaf_match</span>(x, con, <span class="at">include_aliases =</span> <span class="cn">TRUE</span>)              <span class="co"># default: aliases compete with core rows</span></span>
-<span id="cb4-2"><a href="" aria-hidden="true" tabindex="-1"></a><span class="fu">gnaf_match</span>(x, con, <span class="at">alias_types =</span> <span class="fu">c</span>(<span class="cn">NA</span>, <span class="st">"LOCALITY:SYN"</span>))  <span class="co"># core rows plus suburb synonyms only</span></span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
-<p><span class="normalise">Normalisation</span>: turn street-only on. <span class="precision">Precision</span>: check <code>alias_type</code> on every match.</p>
+<p class="source">
+One measured run against a 13.9M-row database; hardware, database scope, alias volume and input quality materially affect timings.
+</p>
 <aside class="notes">
 <ul>
-<li>Say: aliases are real G-NAF rows that compete with the core rows; a match can legitimately land on one.</li>
-<li>Number / example: locality synonyms are the majority of the loaded table, which is why they are only searched when the locality is weak.</li>
-<li>Watch out: <code>include_aliases = FALSE</code> and an explicit <code>alias_types</code> are mutually exclusive; pick one.</li>
-<li>Transition: “For the precision people, an alias hit is the start of the answer, not the answer.”</li>
+<li>This benchmark intentionally removes exact/cache wins and uses damaged addresses.</li>
+<li>Repeated clean inputs can use exact-label and cache paths. Custom weights and <code>max_results &gt; 1</code> bypass the one-result cache.</li>
 </ul>
 <style type="text/css">
         span.MJX_Assistive_MathML {
@@ -618,40 +974,106 @@ flowchart LR
           display:block!important;
       }</style></aside>
 </section>
-<section id="resolving-an-alias-to-the-real-dwelling" class="slide level2">
-<h2>Resolving an alias to the real dwelling</h2>
-<div class="cell" data-reveal="true" data-fig-width="12" data-fig-height="3" data-layout-align="center">
+<section id="step-4-return-a-useful-audit-table" class="slide level2">
+<h2>Step 4 — return a useful audit table</h2>
+<div class="code-copy-outer-scaffold"><div class="sourceCode" id="cb6"><pre class="sourceCode r code-with-copy"><code class="sourceCode r"><span id="cb6-1"><a href="" aria-hidden="true" tabindex="-1"></a>results[, .(</span>
+<span id="cb6-2"><a href="" aria-hidden="true" tabindex="-1"></a>  input_id, input_raw, input_standardised, matched,</span>
+<span id="cb6-3"><a href="" aria-hidden="true" tabindex="-1"></a>  address_detail_pid, address_label, longitude, latitude,</span>
+<span id="cb6-4"><a href="" aria-hidden="true" tabindex="-1"></a>  alias_type, total_score, score_street_name,</span>
+<span id="cb6-5"><a href="" aria-hidden="true" tabindex="-1"></a>  score_number, match_rank</span>
+<span id="cb6-6"><a href="" aria-hidden="true" tabindex="-1"></a>)]</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
+<div class="columns">
+<div class="column" style="width:48%;">
+<h3 id="for-automation">For automation</h3>
+<p>Stable PID, coordinates, source, rank and selected geography columns.</p>
+</div><div class="column" style="width:48%;">
+<h3 id="for-audit">For audit</h3>
+<p>Raw and standardised text, matched label, relationships and six component scores.</p>
+</div></div>
+<aside class="notes">
+<ul>
+<li>Unmatched inputs remain as rows, making joins to source data predictable.</li>
+<li><code>max_results &gt; 1</code> provides alternatives with deterministic ranks.</li>
+</ul>
+<style type="text/css">
+        span.MJX_Assistive_MathML {
+          position:absolute!important;
+          clip: rect(1px, 1px, 1px, 1px);
+          padding: 1px 0 0 0!important;
+          border: 0!important;
+          height: 1px!important;
+          width: 1px!important;
+          overflow: hidden!important;
+          display:block!important;
+      }</style></aside>
+</section>
+<section id="ivo-street-match-dwelling-and-property" class="slide level2">
+<h2>IVO Street: match, dwelling and property</h2>
+<div class="cell" data-reveal="true" data-fig-height="3.9" data-layout-align="center">
 <div class="cell-output-display">
 <div>
 <p></p><figure class=""><p></p>
 <div>
 <pre class="mermaid mermaid-js">%%{init: {'themeVariables': {'fontSize': '16px'}}}%%
 flowchart LR
-  A["27 Ivo Street&lt;br/&gt;Nundah 4012"] --&gt; B["alias row&lt;br/&gt;ADDRESS:SYN"]
-  B --&gt;|return_principal| C["principal&lt;br/&gt;Unit 2 16 Wally St"]
-  C --&gt;|return_primary| D["primary&lt;br/&gt;16 Wally Street"]
-  B -.-&gt;|kept as| E["matched_*&lt;br/&gt;columns"]
+  A["INPUT&lt;br/&gt;27 Ivo Stret&lt;br/&gt;Nundah 4012"] --&gt; B["MATCHED ALIAS&lt;br/&gt;27 IVO STREET&lt;br/&gt;&lt;b&gt;GAQLD155672969&lt;/b&gt;"]
+  B --&gt;|principal_pid| C["REAL UNIT&lt;br/&gt;UNIT 2 16 WALLY STREET&lt;br/&gt;&lt;b&gt;GAQLD158440593&lt;/b&gt;"]
+  C --&gt;|primary_pid| D["PARENT PROPERTY&lt;br/&gt;16 WALLY STREET&lt;br/&gt;&lt;b&gt;GAQLD156981590&lt;/b&gt;"]
 </pre>
 </div>
 <p></p></figure><p></p>
 </div>
 </div>
 </div>
-<div class="code-copy-outer-scaffold"><div class="sourceCode" id="cb5"><pre class="sourceCode r code-with-copy"><code class="sourceCode r"><span id="cb5-1"><a href="" aria-hidden="true" tabindex="-1"></a><span class="fu">gnaf_match</span>(<span class="st">"27 Ivo Street, Nundah QLD 4012"</span>, con,</span>
-<span id="cb5-2"><a href="" aria-hidden="true" tabindex="-1"></a>           <span class="at">return_principal =</span> <span class="cn">TRUE</span>, <span class="at">return_primary =</span> <span class="cn">TRUE</span>)</span>
-<span id="cb5-3"><a href="" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; address_label:          16 WALLY STREET, NUNDAH QLD 4012        (the property)</span></span>
-<span id="cb5-4"><a href="" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; matched_address_label:  27 IVO STREET, NUNDAH QLD 4012          (the ADDRESS:SYN alias that scored)</span></span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
-<ul>
-<li><code>return_principal</code> swaps in the non-alias record; <code>return_primary</code> then swaps in the parent property</li>
-<li><code>resolve_principal = TRUE</code> instead adds <code>principal_*</code> columns and leaves the match untouched</li>
-</ul>
-<p><span class="precision">Precision</span>: this is how you count dwellings, not spellings.</p>
+<table class="caption-top">
+<colgroup>
+<col style="width: 33%">
+<col style="width: 33%">
+<col style="width: 33%">
+</colgroup>
+<thead>
+<tr class="header">
+<th>Option</th>
+<th>Address fields describe</th>
+<th>Why use it?</th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<td>default</td>
+<td>alias that won</td>
+<td>Explain exactly what matched</td>
+</tr>
+<tr class="even">
+<td><code>resolve_principal = TRUE</code></td>
+<td>alias + <code>principal_*</code></td>
+<td>Compare both descriptions</td>
+</tr>
+<tr class="odd">
+<td><code>return_principal = TRUE</code></td>
+<td>non-alias unit</td>
+<td>Link spellings to one dwelling</td>
+</tr>
+<tr class="even">
+<td>plus <code>return_primary = TRUE</code></td>
+<td>parent property</td>
+<td>Aggregate units to a site</td>
+</tr>
+</tbody>
+</table>
+<div class="callout callout-note callout-style-simple">
+<div class="callout-body">
+<div class="callout-icon-container">
+<i class="callout-icon"></i>
+</div>
+<div class="callout-content">
+<p>When address fields are replaced, <code>matched_*</code> preserves the alias that was scored. Score and rank always describe that original candidate.</p>
+</div>
+</div>
+</div>
 <aside class="notes">
 <ul>
-<li>Say: three real G-NAF rows for one unit: the alias, the principal, and the primary property it sits in.</li>
-<li>Number / example: Ivo Street is a synonym for Unit 2, 16 Wally Street; the primary is 16 Wally Street itself.</li>
-<li>Watch out: the score and rank still describe the row that matched, and the <code>matched_*</code> columns keep it; the cache stores the original candidate too, so the options can change between calls.</li>
-<li>Transition: “Once you know which dwelling, you usually want to know where it sits.”</li>
+<li>Principal removes the alias; primary moves from a secondary/unit record to its parent property.</li>
 </ul>
 <style type="text/css">
         span.MJX_Assistive_MathML {
@@ -665,73 +1087,40 @@ flowchart LR
           display:block!important;
       }</style></aside>
 </section>
-<section id="saved-geographies" class="slide level2">
-<h2>Saved geographies</h2>
-<div class="code-copy-outer-scaffold"><div class="sourceCode" id="cb6"><pre class="sourceCode r code-with-copy"><code class="sourceCode r"><span id="cb6-1"><a href="" aria-hidden="true" tabindex="-1"></a><span class="co"># Compute a layer once from polygons and save it in the database</span></span>
-<span id="cb6-2"><a href="" aria-hidden="true" tabindex="-1"></a><span class="fu">gnaf_add_geography</span>(con, <span class="st">"sa2_2021"</span>, sa2_sf,</span>
-<span id="cb6-3"><a href="" aria-hidden="true" tabindex="-1"></a>                   <span class="at">return_cols =</span> <span class="fu">c</span>(<span class="at">sa2_code =</span> <span class="st">"SA2_CODE21"</span>, <span class="at">sa2_name =</span> <span class="st">"SA2_NAME21"</span>))</span>
-<span id="cb6-4"><a href="" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb6-5"><a href="" aria-hidden="true" tabindex="-1"></a><span class="co"># ...or register a table you already have</span></span>
-<span id="cb6-6"><a href="" aria-hidden="true" tabindex="-1"></a><span class="fu">gnaf_register_geography</span>(con, <span class="st">"sa2_2021"</span>, <span class="st">"gnaf_sa2_2021"</span>, <span class="at">points_crs =</span> <span class="dv">7844</span>)</span>
-<span id="cb6-7"><a href="" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb6-8"><a href="" aria-hidden="true" tabindex="-1"></a><span class="co"># Then ask for it by name on every match</span></span>
-<span id="cb6-9"><a href="" aria-hidden="true" tabindex="-1"></a>results <span class="ot">&lt;-</span> <span class="fu">gnaf_match</span>(addresses, con, <span class="at">geographies =</span> <span class="st">"sa2_2021"</span>)   <span class="co"># TRUE = every layer</span></span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
-<ul>
-<li>Point-in-polygon runs once per database, not once per run</li>
-<li>Columns are appended for the final returned PID, after principal/primary resolution</li>
-<li><code>NA</code> where no polygon contains the point; no nearest-polygon guessing</li>
-</ul>
-<p><span class="normalise">Normalisation</span>: SA2 or LGA on every row, for free, forever.</p>
-<aside class="notes">
-<ul>
-<li>Say: the expensive spatial join happens once against the G-NAF points and is stored beside them.</li>
-<li>Number / example: <code>gnaf_list_geographies(con)</code> shows what is registered; <code>spatial_lookup()</code> still exists for ad hoc polygons.</li>
-<li>Watch out: a geography column that collides with an existing results column is an error, not a silent overwrite.</li>
-<li>Transition: “Now the part everyone actually spends their time on: looking at the results.”</li>
-</ul>
-<style type="text/css">
-        span.MJX_Assistive_MathML {
-          position:absolute!important;
-          clip: rect(1px, 1px, 1px, 1px);
-          padding: 1px 0 0 0!important;
-          border: 0!important;
-          height: 1px!important;
-          width: 1px!important;
-          overflow: hidden!important;
-          display:block!important;
-      }</style></aside>
-</section>
-<section id="reviewing-results" class="slide level2">
-<h2>Reviewing results</h2>
+<section id="extend-the-reference-data" class="slide level2">
+<h2>Extend the reference data</h2>
 <div class="columns">
 <div class="column" style="width:48%;">
-<h3 id="gnaf_appcon"><code>gnaf_app(con)</code></h3>
+<h3 id="add-operational-addresses">Add operational addresses</h3>
+<div class="code-copy-outer-scaffold"><div class="sourceCode" id="cb7"><pre class="sourceCode r code-with-copy"><code class="sourceCode r"><span id="cb7-1"><a href="" aria-hidden="true" tabindex="-1"></a><span class="fu">gnaf_add</span>(con, pli_addresses)</span>
+<span id="cb7-2"><a href="" aria-hidden="true" tabindex="-1"></a>results <span class="ot">&lt;-</span> <span class="fu">gnaf_match</span>(</span>
+<span id="cb7-3"><a href="" aria-hidden="true" tabindex="-1"></a>  addresses, con,</span>
+<span id="cb7-4"><a href="" aria-hidden="true" tabindex="-1"></a>  <span class="at">include_custom =</span> <span class="cn">TRUE</span></span>
+<span id="cb7-5"><a href="" aria-hidden="true" tabindex="-1"></a>)</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
 <ul>
-<li>Paste addresses, run the same <code>gnaf_match()</code></li>
-<li>Input-vs-matched diff on every row</li>
-<li>Jaro-Winkler, Jaccard and Levenshtein text scores alongside the component scores</li>
+<li>PLI, service locations or internal sites</li>
+<li>Same parser, matching and scores</li>
+<li>Marked with <code>source = "custom"</code></li>
 </ul>
 </div><div class="column" style="width:48%;">
-<h3 id="gnaf_threshold_filterresults"><code>gnaf_threshold_filter(results)</code></h3>
+<h3 id="add-saved-geographies">Add saved geographies</h3>
+<div class="code-copy-outer-scaffold"><div class="sourceCode" id="cb8"><pre class="sourceCode r code-with-copy"><code class="sourceCode r"><span id="cb8-1"><a href="" aria-hidden="true" tabindex="-1"></a><span class="fu">gnaf_add_geography</span>(</span>
+<span id="cb8-2"><a href="" aria-hidden="true" tabindex="-1"></a>  con, <span class="st">"sa2_2021"</span>, sa2,</span>
+<span id="cb8-3"><a href="" aria-hidden="true" tabindex="-1"></a>  <span class="at">return_cols =</span> <span class="fu">c</span>(</span>
+<span id="cb8-4"><a href="" aria-hidden="true" tabindex="-1"></a>    <span class="at">sa2_code =</span> <span class="st">"SA2_CODE21"</span>,</span>
+<span id="cb8-5"><a href="" aria-hidden="true" tabindex="-1"></a>    <span class="at">sa2_name =</span> <span class="st">"SA2_NAME21"</span></span>
+<span id="cb8-6"><a href="" aria-hidden="true" tabindex="-1"></a>  )</span>
+<span id="cb8-7"><a href="" aria-hidden="true" tabindex="-1"></a>)</span>
+<span id="cb8-8"><a href="" aria-hidden="true" tabindex="-1"></a><span class="fu">gnaf_match</span>(x, con, <span class="at">geographies =</span> <span class="st">"sa2_2021"</span>)</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
 <ul>
-<li>A range slider on <strong>every</strong> score, text scores included</li>
-<li>In-scope and out-of-scope tables move live</li>
-<li>Flag individual inputs as false positives</li>
-<li>Done prints the filter as code</li>
+<li>Point-in-polygon computed once</li>
+<li>Joined after principal / primary resolution</li>
 </ul>
 </div></div>
-<div class="code-copy-outer-scaffold"><div class="sourceCode" id="cb7"><pre class="sourceCode r code-with-copy"><code class="sourceCode r"><span id="cb7-1"><a href="" aria-hidden="true" tabindex="-1"></a><span class="fu">gnaf_threshold_filter</span>(results)</span>
-<span id="cb7-2"><a href="" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; ## data.table</span></span>
-<span id="cb7-3"><a href="" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; results[matched == TRUE &amp; total_score &gt;= 80 &amp; score_street_name &gt;= 30 &amp; !input_id %in% c(41)]</span></span>
-<span id="cb7-4"><a href="" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; ## dplyr</span></span>
-<span id="cb7-5"><a href="" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; results |&gt; dplyr::filter(matched == TRUE, total_score &gt;= 80, score_street_name &gt;= 30, ...)</span></span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
-<p><span class="precision">Precision</span>: find the false positives. <span class="normalise">Normalisation</span>: find the bar.</p>
 <aside class="notes">
 <ul>
-<li>Say: the threshold argument stops being an opinion in a meeting and becomes a line of code in the repo.</li>
-<li>Number / example: flagging a row excludes its whole <code>input_id</code>, every rank, because that is what a false positive means.</li>
-<li>Watch out: thresholds on the text scores wrap the result in <code>gnaf_text_scores()</code> in the printed code, so the snippet runs as-is on a plain <code>gnaf_match()</code> result.</li>
-<li>Transition: “Let me do it rather than describe it.”</li>
+<li>Custom records need structured fields, but not the full raw G-NAF schema.</li>
+<li>Saved geographies are snapshots; rebuild after coordinate or reference-data changes.</li>
 </ul>
 <style type="text/css">
         span.MJX_Assistive_MathML {
@@ -745,64 +1134,229 @@ flowchart LR
           display:block!important;
       }</style></aside>
 </section>
-<section id="section-1" class="slide level2" data-background-color="#12405c">
-<h2></h2>
-<h3 class="dim" id="live-demo-2---threshold-filter">Live demo 2 - threshold filter</h3>
-<div class="code-copy-outer-scaffold"><div class="sourceCode" id="cb8"><pre class="sourceCode r code-with-copy"><code class="sourceCode r"><span id="cb8-1"><a href="" aria-hidden="true" tabindex="-1"></a>results <span class="ot">&lt;-</span> <span class="fu">gnaf_match</span>(sample_addresses, con, <span class="at">min_score =</span> <span class="dv">0</span>)</span>
-<span id="cb8-2"><a href="" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb8-3"><a href="" aria-hidden="true" tabindex="-1"></a><span class="fu">gnaf_threshold_filter</span>(results)</span>
-<span id="cb8-4"><a href="" aria-hidden="true" tabindex="-1"></a><span class="co"># drag total_score and street name; watch rows cross over</span></span>
-<span id="cb8-5"><a href="" aria-hidden="true" tabindex="-1"></a><span class="co"># flag one false positive; press Done; paste the printed line</span></span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
-<aside class="notes">
-<ul>
-<li>Say: match once at <code>min_score = 0</code> so the app has the full distribution to work with.</li>
-<li>Number / example: drag total score up to about 80 and watch the out-of-scope table fill from the bottom of the in-scope one.</li>
-<li>Watch out: flag one row, then show the <code>!input_id %in% c(...)</code> term appear in the code panel.</li>
-<li>Transition: “Which brings us back to the two audiences and what each should actually run.”</li>
-</ul>
-<style type="text/css">
-        span.MJX_Assistive_MathML {
-          position:absolute!important;
-          clip: rect(1px, 1px, 1px, 1px);
-          padding: 1px 0 0 0!important;
-          border: 0!important;
-          height: 1px!important;
-          width: 1px!important;
-          overflow: hidden!important;
-          display:block!important;
-      }</style></aside>
-</section>
-<section id="two-recipes-one-file" class="slide level2">
-<h2>Two recipes, one file</h2>
+<section id="review-the-population-not-just-one-row" class="slide level2">
+<h2>Review the population, not just one row</h2>
 <div class="columns">
-<div class="column" style="width:50%;">
-<h3 id="high-precision-1"><span class="precision">High precision</span></h3>
-<div class="code-copy-outer-scaffold"><div class="sourceCode" id="cb9"><pre class="sourceCode r code-with-copy"><code class="sourceCode r"><span id="cb9-1"><a href="" aria-hidden="true" tabindex="-1"></a><span class="fu">gnaf_match</span>(x, con,</span>
-<span id="cb9-2"><a href="" aria-hidden="true" tabindex="-1"></a>  <span class="at">max_results =</span> <span class="dv">3</span>,</span>
-<span id="cb9-3"><a href="" aria-hidden="true" tabindex="-1"></a>  <span class="at">min_score =</span> <span class="dv">90</span>,</span>
-<span id="cb9-4"><a href="" aria-hidden="true" tabindex="-1"></a>  <span class="at">weights =</span> <span class="fu">list</span>(<span class="at">postcode =</span> <span class="dv">15</span>, <span class="at">suburb =</span> <span class="dv">10</span>,</span>
-<span id="cb9-5"><a href="" aria-hidden="true" tabindex="-1"></a>                 <span class="at">street_name =</span> <span class="dv">35</span>, <span class="at">street_type =</span> <span class="dv">5</span>,</span>
-<span id="cb9-6"><a href="" aria-hidden="true" tabindex="-1"></a>                 <span class="at">number =</span> <span class="dv">25</span>, <span class="at">flat =</span> <span class="dv">10</span>),</span>
-<span id="cb9-7"><a href="" aria-hidden="true" tabindex="-1"></a>  <span class="at">return_principal =</span> <span class="cn">TRUE</span>)</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
-</div><div class="column" style="width:50%;">
-<h3 id="normalisation-1"><span class="normalise">Normalisation</span></h3>
-<div class="code-copy-outer-scaffold"><div class="sourceCode" id="cb10"><pre class="sourceCode r code-with-copy"><code class="sourceCode r"><span id="cb10-1"><a href="" aria-hidden="true" tabindex="-1"></a><span class="fu">gnaf_match</span>(x, con,</span>
-<span id="cb10-2"><a href="" aria-hidden="true" tabindex="-1"></a>  <span class="at">max_results =</span> <span class="dv">1</span>,</span>
-<span id="cb10-3"><a href="" aria-hidden="true" tabindex="-1"></a>  <span class="at">min_score =</span> <span class="dv">40</span>,</span>
-<span id="cb10-4"><a href="" aria-hidden="true" tabindex="-1"></a>  <span class="at">street_only_fallback =</span> <span class="cn">TRUE</span>,</span>
-<span id="cb10-5"><a href="" aria-hidden="true" tabindex="-1"></a>  <span class="at">include_aliases =</span> <span class="cn">TRUE</span>)[</span>
-<span id="cb10-6"><a href="" aria-hidden="true" tabindex="-1"></a>  , .(input_raw, address_label,</span>
-<span id="cb10-7"><a href="" aria-hidden="true" tabindex="-1"></a>      longitude, latitude)]</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
+<div class="column" style="width:48%;">
+<section id="gnaf_app" class="card">
+<h3><code>gnaf_app()</code></h3>
+<ul>
+<li>Enter addresses and match interactively</li>
+<li>Compare raw, standardised and matched text</li>
+<li>Inspect component and whole-string scores</li>
+<li>Download candidate results</li>
+</ul>
+</section>
+<section id="static-diff-output" class="card">
+<h3>Static diff output</h3>
+<div class="code-copy-outer-scaffold"><div class="sourceCode" id="cb9"><pre class="sourceCode r code-with-copy"><code class="sourceCode r"><span id="cb9-1"><a href="" aria-hidden="true" tabindex="-1"></a><span class="fu">gnaf_threshold_filter</span>(</span>
+<span id="cb9-2"><a href="" aria-hidden="true" tabindex="-1"></a>  results,</span>
+<span id="cb9-3"><a href="" aria-hidden="true" tabindex="-1"></a>  <span class="at">html =</span> <span class="st">"review.html"</span></span>
+<span id="cb9-4"><a href="" aria-hidden="true" tabindex="-1"></a>)</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
+<p>Lightweight review across a very large result.</p>
+</section>
+</div><div class="column" style="width:48%;">
+<section id="gnaf_threshold_filter" class="card">
+<h3><code>gnaf_threshold_filter()</code></h3>
+<ul>
+<li>Move score ranges and watch scope change</li>
+<li>Flag known false positives</li>
+<li>Compare Jaro-Winkler, Jaccard and Levenshtein scores</li>
+<li>Print the final rule as code</li>
+</ul>
+</section>
+<div class="code-copy-outer-scaffold"><div class="sourceCode" id="cb10"><pre class="sourceCode r code-with-copy"><code class="sourceCode r"><span id="cb10-1"><a href="" aria-hidden="true" tabindex="-1"></a><span class="co"># Generated, reproducible rule</span></span>
+<span id="cb10-2"><a href="" aria-hidden="true" tabindex="-1"></a>results[</span>
+<span id="cb10-3"><a href="" aria-hidden="true" tabindex="-1"></a>  matched <span class="sc">==</span> <span class="cn">TRUE</span> <span class="sc">&amp;</span></span>
+<span id="cb10-4"><a href="" aria-hidden="true" tabindex="-1"></a>  total_score <span class="sc">&gt;=</span> <span class="dv">85</span> <span class="sc">&amp;</span></span>
+<span id="cb10-5"><a href="" aria-hidden="true" tabindex="-1"></a>  score_number <span class="sc">&gt;=</span> <span class="dv">7</span></span>
+<span id="cb10-6"><a href="" aria-hidden="true" tabindex="-1"></a>]</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
 </div></div>
-<p class="dim">
-Or match once at <code>min_score = 0</code>, keep every column, and let each consumer filter with the line the threshold app printed.
+<aside class="notes">
+<ul>
+<li>Threshold selection becomes evidence and code rather than an undocumented meeting decision.</li>
+<li>Whole-string scores supplement the component scores.</li>
+</ul>
+<style type="text/css">
+        span.MJX_Assistive_MathML {
+          position:absolute!important;
+          clip: rect(1px, 1px, 1px, 1px);
+          padding: 1px 0 0 0!important;
+          border: 0!important;
+          height: 1px!important;
+          width: 1px!important;
+          overflow: hidden!important;
+          display:block!important;
+      }</style></aside>
+</section>
+<section id="usage-1-install-and-build" class="slide level2">
+<h2>Usage 1 — install and build</h2>
+<div class="code-copy-outer-scaffold"><div class="sourceCode" id="cb11"><pre class="sourceCode r code-with-copy"><code class="sourceCode r"><span id="cb11-1"><a href="" aria-hidden="true" tabindex="-1"></a><span class="co"># Install</span></span>
+<span id="cb11-2"><a href="" aria-hidden="true" tabindex="-1"></a>remotes<span class="sc">::</span><span class="fu">install_github</span>(<span class="st">"KyleHaynes/gnafr"</span>)</span>
+<span id="cb11-3"><a href="" aria-hidden="true" tabindex="-1"></a><span class="fu">library</span>(gnafr)</span>
+<span id="cb11-4"><a href="" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb11-5"><a href="" aria-hidden="true" tabindex="-1"></a><span class="co"># Connect to a persistent database</span></span>
+<span id="cb11-6"><a href="" aria-hidden="true" tabindex="-1"></a>con <span class="ot">&lt;-</span> <span class="fu">gnaf_connect</span>(<span class="st">"C:/data/gnaf.duckdb"</span>)</span>
+<span id="cb11-7"><a href="" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb11-8"><a href="" aria-hidden="true" tabindex="-1"></a><span class="co"># Preferred: raw G-NAF Standard PSV product</span></span>
+<span id="cb11-9"><a href="" aria-hidden="true" tabindex="-1"></a><span class="fu">gnaf_build_db</span>(</span>
+<span id="cb11-10"><a href="" aria-hidden="true" tabindex="-1"></a>  con,</span>
+<span id="cb11-11"><a href="" aria-hidden="true" tabindex="-1"></a>  <span class="at">gnaf_dir =</span> <span class="st">"C:/data/G-NAF AUGUST 2026/Standard"</span>,</span>
+<span id="cb11-12"><a href="" aria-hidden="true" tabindex="-1"></a>  <span class="at">states =</span> <span class="fu">c</span>(<span class="st">"QLD"</span>, <span class="st">"NSW"</span>)</span>
+<span id="cb11-13"><a href="" aria-hidden="true" tabindex="-1"></a>)</span>
+<span id="cb11-14"><a href="" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb11-15"><a href="" aria-hidden="true" tabindex="-1"></a><span class="co"># Alternative: flattened G-NAF Core CSV</span></span>
+<span id="cb11-16"><a href="" aria-hidden="true" tabindex="-1"></a><span class="co"># gnaf_init(con)</span></span>
+<span id="cb11-17"><a href="" aria-hidden="true" tabindex="-1"></a><span class="co"># gnaf_load(con, "C:/data/gnaf-core.csv")</span></span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
+<aside class="notes">
+<ul>
+<li>Database preparation is not repeated before every match.</li>
+<li>Use <code>gnaf_status(con)</code> to confirm counts and <code>gnaf_disconnect(con)</code> when finished.</li>
+</ul>
+<style type="text/css">
+        span.MJX_Assistive_MathML {
+          position:absolute!important;
+          clip: rect(1px, 1px, 1px, 1px);
+          padding: 1px 0 0 0!important;
+          border: 0!important;
+          height: 1px!important;
+          width: 1px!important;
+          overflow: hidden!important;
+          display:block!important;
+      }</style></aside>
+</section>
+<section id="usage-2-start-simple-then-expose-choices" class="slide level2">
+<h2>Usage 2 — start simple, then expose choices</h2>
+<div class="code-copy-outer-scaffold"><div class="sourceCode" id="cb12"><pre class="sourceCode r code-with-copy"><code class="sourceCode r"><span id="cb12-1"><a href="" aria-hidden="true" tabindex="-1"></a>results <span class="ot">&lt;-</span> <span class="fu">gnaf_match</span>(</span>
+<span id="cb12-2"><a href="" aria-hidden="true" tabindex="-1"></a>  addresses, con,</span>
+<span id="cb12-3"><a href="" aria-hidden="true" tabindex="-1"></a>  <span class="at">max_results =</span> <span class="dv">1</span>L,</span>
+<span id="cb12-4"><a href="" aria-hidden="true" tabindex="-1"></a>  <span class="at">min_score =</span> <span class="dv">80</span>L,</span>
+<span id="cb12-5"><a href="" aria-hidden="true" tabindex="-1"></a>  <span class="at">include_aliases =</span> <span class="cn">TRUE</span>,</span>
+<span id="cb12-6"><a href="" aria-hidden="true" tabindex="-1"></a>  <span class="at">include_custom =</span> <span class="cn">TRUE</span>,</span>
+<span id="cb12-7"><a href="" aria-hidden="true" tabindex="-1"></a>  <span class="at">return_principal =</span> <span class="cn">TRUE</span>,</span>
+<span id="cb12-8"><a href="" aria-hidden="true" tabindex="-1"></a>  <span class="at">street_only_fallback =</span> <span class="cn">FALSE</span>,</span>
+<span id="cb12-9"><a href="" aria-hidden="true" tabindex="-1"></a>  <span class="at">geographies =</span> <span class="st">"sa2_2021"</span></span>
+<span id="cb12-10"><a href="" aria-hidden="true" tabindex="-1"></a>)</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
+<table class="caption-top">
+<thead>
+<tr class="header">
+<th>If you need…</th>
+<th>Change…</th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<td>alternatives for review</td>
+<td><code>max_results = 3L</code></td>
+</tr>
+<tr class="even">
+<td>a broad diagnostic population</td>
+<td>lower <code>min_score</code>, then filter</td>
+</tr>
+<tr class="odd">
+<td>exact alias control</td>
+<td>set <code>alias_types</code> explicitly</td>
+</tr>
+<tr class="even">
+<td>parent-property output</td>
+<td><code>return_primary = TRUE</code></td>
+</tr>
+<tr class="odd">
+<td>number-free street matches</td>
+<td><code>street_only_fallback = TRUE</code></td>
+</tr>
+<tr class="even">
+<td>repeat-run speed</td>
+<td>keep settings that permit <code>cache = TRUE</code></td>
+</tr>
+</tbody>
+</table>
+<aside class="notes">
+<ul>
+<li>Start with defaults and measure. Each option has a semantic or performance consequence.</li>
+<li><code>include_aliases = FALSE</code> cannot be combined with explicit <code>alias_types</code>.</li>
+</ul>
+<style type="text/css">
+        span.MJX_Assistive_MathML {
+          position:absolute!important;
+          clip: rect(1px, 1px, 1px, 1px);
+          padding: 1px 0 0 0!important;
+          border: 0!important;
+          height: 1px!important;
+          width: 1px!important;
+          overflow: hidden!important;
+          display:block!important;
+      }</style></aside>
+</section>
+<section id="a-practical-production-pattern" class="slide level2">
+<h2>A practical production pattern</h2>
+<div class="code-copy-outer-scaffold"><div class="sourceCode" id="cb13"><pre class="sourceCode r code-with-copy"><code class="sourceCode r"><span id="cb13-1"><a href="" aria-hidden="true" tabindex="-1"></a><span class="co"># 1. Match broadly enough to study the distribution</span></span>
+<span id="cb13-2"><a href="" aria-hidden="true" tabindex="-1"></a>candidates <span class="ot">&lt;-</span> <span class="fu">gnaf_match</span>(</span>
+<span id="cb13-3"><a href="" aria-hidden="true" tabindex="-1"></a>  source_dt<span class="sc">$</span>address, con,</span>
+<span id="cb13-4"><a href="" aria-hidden="true" tabindex="-1"></a>  <span class="at">max_results =</span> <span class="dv">3</span>L,</span>
+<span id="cb13-5"><a href="" aria-hidden="true" tabindex="-1"></a>  <span class="at">min_score =</span> <span class="dv">60</span>L,</span>
+<span id="cb13-6"><a href="" aria-hidden="true" tabindex="-1"></a>  <span class="at">return_principal =</span> <span class="cn">TRUE</span></span>
+<span id="cb13-7"><a href="" aria-hidden="true" tabindex="-1"></a>)</span>
+<span id="cb13-8"><a href="" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb13-9"><a href="" aria-hidden="true" tabindex="-1"></a><span class="co"># 2. Review a labelled sample and choose explicit rules</span></span>
+<span id="cb13-10"><a href="" aria-hidden="true" tabindex="-1"></a><span class="fu">gnaf_threshold_filter</span>(candidates)</span>
+<span id="cb13-11"><a href="" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb13-12"><a href="" aria-hidden="true" tabindex="-1"></a><span class="co"># 3. Apply the accepted rule and join by input_id</span></span>
+<span id="cb13-13"><a href="" aria-hidden="true" tabindex="-1"></a>accepted <span class="ot">&lt;-</span> candidates[</span>
+<span id="cb13-14"><a href="" aria-hidden="true" tabindex="-1"></a>  match_rank <span class="sc">==</span> <span class="dv">1</span>L <span class="sc">&amp;</span></span>
+<span id="cb13-15"><a href="" aria-hidden="true" tabindex="-1"></a>  total_score <span class="sc">&gt;=</span> <span class="dv">85</span>L <span class="sc">&amp;</span></span>
+<span id="cb13-16"><a href="" aria-hidden="true" tabindex="-1"></a>  score_street_name <span class="sc">&gt;=</span> <span class="dv">30</span>L</span>
+<span id="cb13-17"><a href="" aria-hidden="true" tabindex="-1"></a>]</span>
+<span id="cb13-18"><a href="" aria-hidden="true" tabindex="-1"></a>final <span class="ot">&lt;-</span> accepted[source_dt[, source_row <span class="sc">:</span><span class="er">=</span> .I],</span>
+<span id="cb13-19"><a href="" aria-hidden="true" tabindex="-1"></a>                  on <span class="ot">=</span> .(<span class="at">input_id =</span> source_row)]</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
+<div class="callout callout-tip callout-style-simple">
+<div class="callout-body">
+<div class="callout-icon-container">
+<i class="callout-icon"></i>
+</div>
+<div class="callout-content">
+<p>Keep the full candidate table as an audit artefact. Filtered outputs are reproducible; discarded evidence is not.</p>
+</div>
+</div>
+</div>
+<aside class="notes">
+<ul>
+<li>Replace example thresholds with rules learned from a labelled sample.</li>
+<li>Join on <code>input_id</code>; address strings may not be unique.</li>
+</ul>
+<style type="text/css">
+        span.MJX_Assistive_MathML {
+          position:absolute!important;
+          clip: rect(1px, 1px, 1px, 1px);
+          padding: 1px 0 0 0!important;
+          border: 0!important;
+          height: 1px!important;
+          width: 1px!important;
+          overflow: hidden!important;
+          display:block!important;
+      }</style></aside>
+</section>
+<section id="three-ideas-to-take-away" class="slide level2">
+<h2>Three ideas to take away</h2>
+<div class="three-ideas">
+<div class="idea">
+<p><span class="idea-number">1</span> ### Own the reference data G-NAF and custom records live in a persistent, portable DuckDB file.</p>
+</div>
+<div class="idea">
+<p><span class="idea-number">2</span> ### Keep judgement visible Scores, alternatives and relationships explain the result.</p>
+</div>
+<div class="idea">
+<p><span class="idea-number">3</span> ### Tune for the use case Precision, coverage and output entity are explicit choices.</p>
+</div>
+</div>
+<h3 id="questions-and-difficult-addresses-welcome">Questions — and difficult addresses welcome</h3>
+<p class="source">
+Package: <a href="https://github.com/KyleHaynes/gnafr">github.com/KyleHaynes/gnafr</a>
 </p>
 <aside class="notes">
 <ul>
-<li>Say: same engine, same database file, two argument sets.</li>
-<li>Number / example: the precision recipe moves 15 points of weight from street name onto number and flat because that is where a wrong dwelling shows up.</li>
-<li>Watch out: custom weights mean no match cache; if the weights are stable, tell me and I will key the cache on them.</li>
-<li>Transition: “Filtering is free, re-matching is not. Match once. Here is how to get it.”</li>
+<li>Ask for examples where the expected PID or address is known.</li>
+<li>If time permits, open the threshold app or run the IVO example live.</li>
 </ul>
 <style type="text/css">
         span.MJX_Assistive_MathML {
@@ -815,35 +1369,27 @@ Or match once at <code>min_score = 0</code>, keep every column, and let each con
           overflow: hidden!important;
           display:block!important;
       }</style></aside>
-</section>
-<section id="where-to-get-it-and-what-is-next" class="slide level2">
-<h2>Where to get it, and what is next</h2>
-<div class="code-copy-outer-scaffold"><div class="sourceCode" id="cb11"><pre class="sourceCode r code-with-copy"><code class="sourceCode r"><span id="cb11-1"><a href="" aria-hidden="true" tabindex="-1"></a>devtools<span class="sc">::</span><span class="fu">install_github</span>(<span class="st">"KyleHaynes/gnafr"</span>)</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
-<ul>
-<li>Docs: <a href="https://kylehaynes.github.io/gnafr" class="uri">https://kylehaynes.github.io/gnafr</a></li>
-<li>Version 0.1, one maintainer, a plain DuckDB file you can open with anything</li>
-<li>Next: cache keyed on custom weights; alias search on every match, not just weak ones</li>
-<li><strong>Send me ten addresses it gets wrong.</strong></li>
-</ul>
-<h3 id="questions">Questions</h3>
-<aside class="notes">
-<ul>
-<li>Say: it is early, it is mine, and the data file is a standard DuckDB database you can query directly.</li>
-<li>Number / example: the whole build for a state is minutes; the whole API for the common case is one call.</li>
-<li>Watch out: the most useful thing you can do today is send me addresses that fail, with the answer you expected.</li>
-<li>Transition: open the floor.</li>
-</ul>
-<style type="text/css">
-        span.MJX_Assistive_MathML {
-          position:absolute!important;
-          clip: rect(1px, 1px, 1px, 1px);
-          padding: 1px 0 0 0!important;
-          border: 0!important;
-          height: 1px!important;
-          width: 1px!important;
-          overflow: hidden!important;
-          display:block!important;
-      }</style></aside>
+<script>
+// Ensure the reveal container has focus so keyboard navigation works
+document.addEventListener('DOMContentLoaded', function () {
+  try {
+    var r = document.querySelector('.reveal');
+    if (r) {
+      r.setAttribute('tabindex', '-1');
+      r.focus({ preventScroll: true });
+    } else {
+      document.body.setAttribute('tabindex', '-1');
+      document.body.focus({ preventScroll: true });
+    }
+    // trigger a layout pass in case sizing/layout is needed
+    if (window.Reveal && typeof window.Reveal.layout === 'function') {
+      window.Reveal.layout();
+    }
+  } catch (e) {
+    console.warn('focus helper failed', e);
+  }
+});
+</script>
 
 </section>
     </div>

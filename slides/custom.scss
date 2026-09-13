@@ -78,3 +78,159 @@ $presentation-heading-font-weight: 600 !default;
   display: block;
   margin: 0 auto;
 }
+
+/* Narrative components used throughout the overview deck. */
+.statement {
+  font-size: 1.25em;
+  line-height: 1.35;
+  max-width: 1050px;
+  margin: 0.3em auto 1.1em;
+  text-align: center;
+  color: #12405c;
+}
+
+.hero {
+  margin: 0.25em auto 0.7em;
+  padding: 0.65em 1em;
+  max-width: 970px;
+  border-radius: 16px;
+  background: linear-gradient(120deg, #12405c, #287394);
+  color: #fff;
+  text-align: center;
+  font-size: 1.2em;
+  line-height: 1.15;
+}
+
+.card {
+  height: calc(100% - 1.1em);
+  margin: 0.35em 0;
+  padding: 0.65em 0.75em;
+  border: 1px solid #d9e2ec;
+  border-top: 5px solid #2a6f97;
+  border-radius: 10px;
+  background: #fff;
+  box-shadow: 0 4px 14px rgba(18, 64, 92, 0.06);
+  font-size: 0.84em;
+}
+.card h3 { margin-top: 0; color: #12405c; }
+.card ul { margin-bottom: 0; }
+
+.capability-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 0.45em;
+  font-size: 0.8em;
+}
+.capability-grid .card { margin: 0; min-height: 150px; }
+
+.output-strip {
+  margin: 0.6em 0 0.7em;
+  padding: 0.48em 0.8em;
+  border-radius: 8px;
+  background: #eaf3f7;
+  color: #12405c;
+  text-align: center;
+  font-family: var(--r-code-font, monospace);
+  font-size: 0.82em;
+}
+
+.source {
+  margin-top: 0.7em;
+  color: #6a7686;
+  font-size: 0.55em;
+}
+
+.spectrum {
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  align-items: center;
+  gap: 0.6em;
+  margin: 0.2em 0 0.75em;
+  color: #12405c;
+  font-size: 0.8em;
+  text-align: center;
+}
+.spectrum span { color: #6a7686; }
+.spectrum-line {
+  height: 12px;
+  border-radius: 8px;
+  background: linear-gradient(90deg, #b3541e, #e5b867 50%, #1e6f5c);
+}
+
+.input-parts {
+  display: grid;
+  grid-template-columns: repeat(6, 1fr);
+  gap: 0.3em;
+  margin: 0.5em 0 0.85em;
+}
+.input-parts span {
+  padding: 0.45em 0.25em;
+  border-radius: 7px;
+  background: #eaf3f7;
+  color: #12405c;
+  text-align: center;
+  font-size: 0.62em;
+  font-weight: 600;
+}
+
+.score-card {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 0.18em 1.3em;
+  padding: 0.6em 0.85em;
+  border: 1px solid #d9e2ec;
+  border-radius: 10px;
+  background: #fff;
+  font-size: 0.72em;
+}
+.score-card strong { color: #1e6f5c; text-align: right; }
+.score-card .score-total {
+  margin-top: 0.25em;
+  padding-top: 0.25em;
+  border-top: 2px solid #12405c;
+  color: #12405c;
+  font-size: 1.15em;
+  font-weight: 700;
+}
+
+.metric {
+  margin: 0.6em 0 0;
+  padding: 0.55em 0.8em;
+  border-radius: 9px;
+  text-align: center;
+  font-size: 0.72em;
+}
+.metric strong { font-size: 1.25em; }
+.metric.good { background: #e4f2ed; color: #1e6f5c; }
+.metric.warn { background: #f7eade; color: #9a481b; }
+
+.three-ideas {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 0.65em;
+  margin: 1em 0;
+}
+.idea {
+  padding: 0.8em;
+  border-radius: 12px;
+  background: #eef4f7;
+  text-align: center;
+  font-size: 0.8em;
+}
+.idea h3 { margin: 0.2em 0; }
+.idea-number {
+  display: inline-grid;
+  width: 1.6em;
+  height: 1.6em;
+  place-items: center;
+  border-radius: 50%;
+  background: #12405c;
+  color: #fff;
+  font-size: 1.3em;
+  font-weight: 700;
+}
+
+/* Dense slides opt into smaller text via Quarto's built-in .smaller class. */
+.reveal .callout-note,
+.reveal .callout-important,
+.reveal .callout-tip { border-radius: 8px; }

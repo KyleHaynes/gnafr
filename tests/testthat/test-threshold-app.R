@@ -164,6 +164,9 @@ test_that("the app validates input and its server produces printable code", {
   x0 <- threshold_results()
   expect_error(gnaf_threshold_filter(x0, text_scores = NA, run = FALSE), "must be TRUE or FALSE")
   expect_error(gnaf_threshold_filter(x0, max_rows = 0, run = FALSE), "positive")
+  expect_error(gnaf_threshold_filter(x0, html = NA, run = FALSE), "'html' must be")
+  expect_error(gnaf_threshold_filter(x0, html = c(TRUE, FALSE), run = FALSE), "'html' must be")
+  expect_error(gnaf_threshold_filter(x0, html = "", run = FALSE), "'html' must be")
 
   x <- threshold_results()
   app <- gnaf_threshold_filter(x, run = FALSE)
@@ -290,4 +293,59 @@ test_that("tables and plot render for the prepared data", {
   keep <- .gnaf_threshold_scope(data, thresholds, maxes)
   expect_s3_class(.gnaf_threshold_plot(data, vars, keep, thresholds, maxes), "ggplot")
   expect_null(.gnaf_threshold_plot(.gnaf_threshold_prepare(x[0L]), vars, logical(), thresholds, maxes))
+})
+
+test_that(".gnaf_threshold_html_page renders a self-contained diff table", {
+  x <- threshold_results()
+  page <- .gnaf_threshold_html_page(x, "res")
+
+  expect_type(page, "character")
+  expect_length(page, 1L)
+  expect_match(page, "<!DOCTYPE html>", fixed = TRUE)
+  expect_match(page, "res &mdash; input vs matched diff", fixed = TRUE)
+  # jsdiff-pre/jsdiff-added markup + colours come straight from jsdiffr, same
+  # as the app's own diff cells - this is what "same look and feel" means.
+  expect_match(page, "jsdiff-added", fixed = TRUE)
+  expect_match(page, "diff-table", fixed = TRUE)
+  # The unmatched row (input_id 4) has no address_label to diff against.
+  expect_match(page, "No match to compare", fixed = TRUE)
+  # Every row is included - no max_rows-style truncation in this mode.
+  expect_identical(lengths(regmatches(page, gregexpr("<tr>", page))), nrow(x) + 1L)
+  # Standardised input and matched address get their own plain-text columns,
+  # in addition to (not instead of) the diff column.
+  expect_match(
+    page,
+    '<th data-type="text">Standardised</th><th data-type="text">Matched address</th><th data-type="none">Diff</th>',
+    fixed = TRUE
+  )
+  expect_match(page, "<td>5 OLD STREET, ST LUCIA QLD 4067</td><td>5 OLD STREET, ST LUCIA QLD 4067</td>", fixed = TRUE)
+  # Sortable/resizable columns are plain JS/CSS against data-type + colgroup,
+  # no table widget - keeps the file lightweight for very large results.
+  expect_match(page, "<colgroup>", fixed = TRUE)
+  expect_match(page, "col-resizer", fixed = TRUE)
+  expect_match(page, "addEventListener('click'", fixed = TRUE)
+
+  words_page <- .gnaf_threshold_html_page(x, "res", pair = "raw_match", method_fn = jsdiffr::diff_words)
+  expect_match(
+    words_page,
+    '<th data-type="text">Input</th><th data-type="text">Matched address</th><th data-type="none">Diff</th>',
+    fixed = TRUE
+  )
+})
+
+test_that("html = TRUE/path bypasses the Shiny app and writes a static diff table", {
+  x <- threshold_results()
+
+  html_string <- gnaf_threshold_filter(x, html = TRUE, run = FALSE)
+  expect_type(html_string, "character")
+  expect_match(html_string, "<!DOCTYPE html>", fixed = TRUE)
+  expect_match(html_string, "jsdiff-pre", fixed = TRUE)
+
+  path <- tempfile(fileext = ".html")
+  on.exit(unlink(path), add = TRUE)
+  result <- gnaf_threshold_filter(x, html = path, launch.browser = FALSE)
+  expect_identical(result, path)
+  expect_true(file.exists(path))
+  written <- paste(readLines(path, warn = FALSE), collapse = "\n")
+  expect_match(written, "<!DOCTYPE html>", fixed = TRUE)
 })

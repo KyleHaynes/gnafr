@@ -1,6 +1,6 @@
 ---
 title: "gnafr"
-subtitle: "Fast, fuzzy Australian address matching against the G-NAF"
+subtitle: "Flexible, transparent Australian address matching in R"
 author: "Kyle Haynes"
 date: today
 date-format: "D MMMM YYYY"
@@ -20,417 +20,710 @@ format:
     fig-align: center
     link-external-newwindow: true
     preview-links: false
-    menu:
-      side: left
-      numbers: true
-    mermaid:
-      theme: neutral
+    menu: {side: left, numbers: true}
+    mermaid: {theme: neutral}
 mermaid-format: js
 ---
 
-<!--
-All R code in this deck is shown, never executed: every code block is a plain
-```r fence, so the deck renders with no G-NAF database present. Run the code
-live in RStudio at the two demo slides instead.
--->
-
 ::: {.notes}
-- Say: twenty minutes, two live demos, and I want your worst addresses at the end.
-- Number / example: the G-NAF is ~15 million address records; the package matches against all of them from one file on disk.
-- Watch out: this is a walkthrough, not a pitch. Shout if you want an address tried live.
-- Transition: "It is one line of R. Here it is."
+- This began as a practical data-linkage problem, not an attempt to build another geocoder.
+- Explain why it exists, where the judgement sits, how it works and how to use it.
 :::
 
-## One line in, one data.table out
+## The problem I needed to solve
 
-> Messy free-text Australian addresses in.
-> The best-matching **G-NAF record**, its **coordinates**, and a
-> **0-100 score broken down by component** out.
+::: {.statement}
+I had large collections of Australian addresses that were **almost right** — and needed a repeatable way to connect them to an authoritative record.
+:::
+
+::: {.columns}
+::: {.column width="31%"}
+::: {.card}
+### Messy inputs
+Abbreviations, spelling errors, missing punctuation, old street names, wrong postcodes and partial addresses.
+:::
+:::
+::: {.column width="31%"}
+::: {.card}
+### Bulk work
+Not an autocomplete box: hundreds of thousands of existing records processed together.
+:::
+:::
+::: {.column width="31%"}
+::: {.card}
+### Explainable decisions
+A single “confidence” number was not enough. I needed to see *which parts* agreed.
+:::
+:::
+:::
+
+::: {.notes}
+- Use a real example: a legacy address with a typo and an old street name.
+- Batch linkage and auditability drive almost every design choice in the package.
+:::
+
+## There were useful pieces, but a workflow gap
+
+| Existing approach | Useful for | What I still needed |
+|---|---|---|
+| Hosted geocoding APIs | Interactive lookup and managed infrastructure | Local bulk processing without a per-request dependency |
+| G-NAF import/manipulation tools | Getting authoritative data into R | Fuzzy matching, ranking and review as one pipeline |
+| Parsers and autocomplete services | Structuring text or finding suggestions | Component scores and reproducible acceptance rules |
+
+::: {.callout-note appearance="simple"}
+The goal was not to claim there were no alternatives. It was to make a **self-hosted, R-native, flexible matching workflow** from input string to reviewable result.
+:::
+
+<p class="source">Sources: <a href="https://docs.geoscape.com.au/projects/gnaf_desc/en/stable/appendix_d.html">Geoscape G-NAF metadata</a>; <a href="https://github.com/KyleHaynes/gnaf.r">gnaf.r</a>; <a href="https://github.com/mountain-pass/addressr">Addressr</a>.</p>
+
+::: {.notes}
+- Say “limited fit”, not “nothing exists”. There are adjacent R tools and self-hosted services.
+- G-NAF is open data subject to the applicable licence, attribution and use restrictions.
+:::
+
+## `gnafr` in one sentence
+
+::: {.hero}
+**A character vector goes in.**
+
+**A scored, geocoded `data.table` comes out.**
+:::
 
 ```r
-results <- gnaf_match(dt$address, con)
+results <- gnaf_match(customer$address, con)
 ```
 
-- The whole character vector goes in one call: one row or a few hundred thousand
-- DuckDB holds the G-NAF on disk; the address table never enters R
-- Every row carries the G-NAF PID, the label, the coordinates and the score breakdown
-
-::: {.notes}
-- Say: the interface is boring on purpose. A vector in, a data.table out, one row per match.
-- Number / example: 100k addresses in roughly 15-45 seconds on a laptop against QLD.
-- Watch out: never `lapply()` this per row. The speed comes from scoring inside DuckDB in bulk.
-- Transition: "The score is broken into components because there are two kinds of people in this room."
+::: {.output-strip}
+input → standardised input → matched G-NAF label → PID → coordinates → component scores
 :::
 
-## Two audiences, one engine
+- Uses the G-NAF data you choose to load
+- Runs matching in bulk inside DuckDB
+- Keeps unmatched inputs in the result
+- Returns the evidence needed to decide what “good enough” means
+
+::: {.notes}
+- The interface is deliberately small: vector plus connection.
+- One input can return several candidates with `max_results`; unmatched rows are retained.
+:::
+
+## What it does — and what it does not
 
 ::: {.columns}
 ::: {.column width="48%"}
-### [High precision]{.precision}
+### It does
 
-"I need to know **this exact dwelling**."
-
-- A wrong match is worse than no match
-- Unit-level correctness, record linkage, counts by address
-- Wants: high `min_score`, flat weight up, aliases resolved, a review queue
+- Parse and standardise Australian address text
+- Search core, alias and custom address records
+- Score six address components
+- Return PIDs, labels, coordinates and relationships
+- Cache strong repeat matches
+- Support interactive review and threshold selection
 :::
 ::: {.column width="48%"}
-### [Normalisation]{.normalise}
+### It does not
 
-"I need a **clean consistent string** - and roughly the right spot."
-
-- Coverage beats precision
-- Street or suburb level is fine
-- Wants: low `min_score`, street-only fallback on, `address_label` as the output
+- Confirm that an address can receive mail
+- Turn the score into a probability of correctness
+- Guarantee a match when key evidence is absent
+- Hide uncertainty behind one opaque result
+- Replace domain-specific validation or labelled evaluation
 :::
 :::
-
-<p class="dim">Same code path. Different arguments. I will tag slides as we go.</p>
 
 ::: {.notes}
-- Say: this split is the thread for the whole talk; every knob makes sense once you know which side you are on.
-- Number / example: a wrong unit number is a real error for linkage; one house off is survivable for normalisation.
-- Watch out: you do not need two pipelines. One run can serve both, which is the closing slide.
-- Transition: "Both start from the same file, which you build once."
+- “Matched to G-NAF” and “deliverable postal address” are different claims.
+- The package cannot know the cost of a false positive in the user's project.
 :::
 
-## Build the database once
+## One engine, different definitions of success
+
+<div class="spectrum">
+  <div><strong>Higher precision</strong><br><span>Exact dwelling matters</span></div>
+  <div class="spectrum-line"></div>
+  <div><strong>Higher coverage</strong><br><span>A usable location is enough</span></div>
+</div>
+
+| Control | Towards precision | Towards coverage |
+|---|---|---|
+| `min_score` | Raise the acceptance bar | Admit weaker candidates |
+| `max_results` | Review alternatives | Return one best candidate |
+| `weights` | Emphasise number / flat | Emphasise street / locality |
+| aliases | Inspect or restrict types | Search all available aliases |
+| `street_only_fallback` | Usually off | Match at street level when useful |
+| principal / primary | Resolve the entity needed | Keep the label that best matched |
+
+::: {.notes}
+- There is no universal threshold. The cost of a false match determines the settings.
+:::
+
+## More than string matching
+
+::: {.capability-grid}
+::: {.card}
+### Build
+`gnaf_build_db()` loads G-NAF Standard, aliases, indexes and street-level records.
+:::
+::: {.card}
+### Match
+`gnaf_match()` parses, searches, scores, ranks and geocodes in bulk.
+:::
+::: {.card}
+### Extend
+`gnaf_add()` brings internal or operational addresses into the same search.
+:::
+::: {.card}
+### Resolve
+Principal, primary and alias fields distinguish a matched spelling from the dwelling or property.
+:::
+::: {.card}
+### Enrich
+Saved geographies append SA2, LGA or other polygon attributes.
+:::
+::: {.card}
+### Review
+Shiny and static diff views expose scores and generate filter code.
+:::
+:::
+
+::: {.notes}
+- “Extend” covers PLI or service-address records that are valid internally but absent from G-NAF.
+:::
+
+## Give it the address you actually have
+
+### Best input
+
+```text
+UNIT 2 16 WALLY STREET, NUNDAH QLD 4012
+```
+
+::: {.input-parts}
+<span>unit / level</span><span>street number</span><span>street name + type</span><span>suburb</span><span>state</span><span>postcode</span>
+:::
+
+### Minimal preparation is better
+
+- Keep useful evidence: unit, building, street number, suburb, state and postcode
+- Remove fields that are not part of the address: customer IDs, names and notes
+- Do not spend time uppercasing, expanding `Rd`, or removing punctuation
+- Do not split into columns first unless the source is already structured
+
+::: {.notes}
+- The parser handles case, punctuation and common abbreviations. Over-cleaning can discard evidence.
+- Better addresses are also faster: postcode, state and number make candidate retrieval cheaper.
+:::
+
+## Why DuckDB?
+
+::: {.columns}
+::: {.column width="57%"}
+::: {.big-number}
+one file
+:::
 
 ```r
-library(gnafr)
-con <- gnaf_connect("C:/temp/gnaf.duckdb")
-
-gnaf_build_db(con, gnaf_dir = "C:/temp/G-NAF MAY 2026/Standard",
-              states = c("QLD", "NSW"))   # or "all"
+con <- gnaf_connect("C:/data/gnaf.duckdb")
 ```
 
-- The free **G-NAF Standard** PSV product from Geoscape; it carries the official alias tables
-- One call runs `gnaf_init()`, `gnaf_load_psv()`, `gnaf_build_street_aliases()` and prints `gnaf_status()`
-- Result: a single DuckDB file. Copy it, share it, open it read-only from many sessions
-
-::: {.notes}
-- Say: this is minutes of work, once per G-NAF release, not part of anyone's daily run.
-- Number / example: after the build, alias rows are the majority of the table; locality synonyms alone are most of it.
-- Watch out: `gnaf_load()` takes the simpler G-NAF Core CSV but you lose the official aliases.
-- Transition: "Here is what sits around that file."
+- Persistent: build once, reuse across R sessions
+- Embedded: no database server to administer
+- Fast columnar scans, joins and window functions
+- SQL scores candidates before results enter R
+- Portable across machines and DuckDB clients
+:::
+::: {.column width="39%"}
+```{mermaid}
+%%| fig-height: 4.8
+flowchart TB
+  R["R<br/>parsed inputs"] -->|register batch| D[("DuckDB")]
+  G["G-NAF<br/>millions of rows"] --> D
+  D -->|top candidates only| O["data.table"]
+```
+:::
 :::
 
-## The package, in two phases
+::: {.notes}
+- The national address table never needs to become an R object.
+- Keep one connection open across calls in an app or service.
+:::
+
+## Build once, use many times
 
 ```{mermaid}
-%%| fig-width: 12
-%%| fig-height: 4.5
-%%{init: {'themeVariables': {'fontSize': '16px'}}}%%
+%%| fig-height: 4.9
+%%{init: {'themeVariables': {'fontSize': '17px'}}}%%
 flowchart LR
-  subgraph B["build once"]
-    A["G-NAF PSV<br/>Geoscape"] --> C["gnaf_build_db()"]
-    C --> D[("gnaf.duckdb<br/>+ aliases")]
+  subgraph BUILD["BUILD / REFRESH"]
+    A["G-NAF Standard<br/>PSV files"] --> B["gnaf_build_db()"]
+    X["Internal addresses<br/>e.g. PLI"] --> C["gnaf_add()"]
+    B --> D[("gnaf.duckdb")]
+    C --> D
+    P["SA2 / LGA<br/>polygons"] --> E["gnaf_add_geography()"] --> D
   end
-  subgraph R["every run"]
-    E["messy<br/>addresses"] --> F["gnaf_match()"]
-    F --> G["data.table<br/>scores + coords"]
-    G --> H["gnaf_app()<br/>threshold_filter()"]
-    G --> I["geographies<br/>spatial_lookup()"]
+  subgraph USE["EVERY MATCHING RUN"]
+    I["address vector"] --> M["gnaf_match()"] --> O["scored data.table"]
+    O --> V["review / filter / join"]
   end
-  D -.-> F
+  D -.-> M
 ```
 
-<p class="dim">Dotted line: candidate generation, scoring and ranking all run inside DuckDB.</p>
-
 ::: {.notes}
-- Say: left box happens once, right box happens every run, and the only thing joining them is the file.
-- Number / example: `gnaf_match()` scores millions of candidate pairs in the database and only the top-ranked rows come back to R, wide.
-- Watch out: everything downstream (review app, threshold filter, geographies) works on that one data.table; nothing needs the database again except the geographies join.
-- Transition: "So what actually happens inside `gnaf_match()`?"
+- Refresh when a new G-NAF release or internal-address extract matters.
+- A prepared file can be opened read-only by downstream users.
 :::
 
-## How a match is found
+## What the database build creates
+
+```r
+con <- gnaf_connect("C:/data/gnaf.duckdb")
+gnaf_build_db(
+  con,
+  gnaf_dir = "C:/data/G-NAF AUGUST 2026/Standard",
+  states = "all"
+)
+```
 
 ```{mermaid}
-%%| fig-width: 12
-%%| fig-height: 4.5
-%%{init: {'themeVariables': {'fontSize': '16px'}}}%%
+%%| fig-height: 3.5
 flowchart LR
-  A["exact label<br/>or cache"] -->|miss| B["address_parse()"]
-  A -->|hit| Z["score, rank<br/>return"]
-  B -->|postcode| C["postcode join<br/>hot path"]
-  B -->|no postcode| D["state-wide<br/>search"]
-  C --> E{"weak?<br/>score <= 90"}
+  A["create / migrate<br/>schema"] --> B["load core<br/>addresses"]
+  B --> C["load locality,<br/>street + address aliases"]
+  C --> D["build locality<br/>index"]
+  D --> E["build number-free<br/>street records"]
+  E --> F["analyse +<br/>report status"]
+```
+
+<p class="source">G-NAF Standard is distributed as PSV files through <a href="https://data.gov.au/data/dataset/geocoded-national-address-file-g-naf">data.gov.au</a>. Check the licence and use restrictions applying to your download.</p>
+
+::: {.notes}
+- Standard is preferred when aliases matter. `gnaf_load()` also accepts flattened G-NAF Core CSV.
+- Limit `states` when the project only needs specific jurisdictions.
+:::
+
+## Inside `gnaf_match()`
+
+```{mermaid}
+%%| fig-height: 5.0
+%%{init: {'themeVariables': {'fontSize': '17px'}}}%%
+flowchart LR
+  A["raw address"] --> B["parse +<br/>standardise"]
+  B --> C{"fast path?"}
+  C -->|exact / cache| G["rank + return"]
+  C -->|postcode| D["postcode +<br/>number block"]
+  C -->|state only| E["state +<br/>number block"]
+  D --> F["component<br/>scoring"]
+  E --> F
+  F --> H{"weak locality<br/>or unmatched?"}
+  H -->|yes| I["locality →<br/>postcode fallback"] --> J["re-score"] --> G
+  H -->|no| G
+  G --> K["principal / primary<br/>+ geographies"]
+```
+
+::: {.notes}
+- The key idea is progressive narrowing: cheap structure first, expensive string comparison later.
+- Street-only fallback is an optional final path omitted here for readability.
+:::
+
+## Step 1 — parse and standardise
+
+```r
+address_parse("U 2, 16 wally st nundah qld 4012")
+```
+
+| Raw evidence | Parsed component | Standardised value |
+|---|---|---|
+| `U 2` | flat type / number | `UNIT`, `2` |
+| `16` | street number | `16` |
+| `wally st` | street name / type | `WALLY`, `STREET` |
+| `nundah` | locality | `NUNDAH` |
+| `qld 4012` | state / postcode | `QLD`, `4012` |
+
+::: {.output-strip}
+UNIT 2 16 WALLY STREET NUNDAH QLD 4012
+:::
+
+- Standardisation creates reliable join keys; it does not decide the match
+- Raw and standardised inputs both remain in the output
+
+::: {.notes}
+- Parsing is deterministic preparation. Fuzzy similarity belongs in scoring.
+- A missing or misparsed number also widens candidate retrieval.
+:::
+
+## Step 2 — find plausible candidates
+
+```{mermaid}
+%%| fig-height: 4.5
+flowchart TB
+  A{"What reliable<br/>location exists?"}
+  A -->|postcode| B["same postcode"]
+  A -->|state only| C["same state"]
+  A -->|weak locality| D["fuzzy locality<br/>finds postcodes"]
+  B --> E["number / lot / range block"]
+  C --> E
   D --> E
-  E -->|no| Z
-  E -->|yes| F["locality fallback<br/>+ alias search"]
-  F --> G["street-only<br/>opt-in"]
-  G --> Z
+  E --> F["street-score upper bound"]
+  F --> G["fully score survivors"]
 ```
 
-- Most inputs stop at the postcode join: a cheap equi-join, then scoring
-- The expensive paths only run on the residue, so time scales with messiness, not row count
-
-::: {.notes}
-- Say: it is a cascade. Each input drops out as soon as something is confident about it.
-- Number / example: "weak" means the best candidate scored at or below `fallback_threshold`, default 90; a coincidental right-number-wrong-street match lands in the low 80s, which is exactly what the fallback is for.
-- Watch out: the parser does the abbreviation work up front, so "Rd", "ROAD" and "Rd." all reach the join as ROAD.
-- Transition: "That leaves the question of what the score actually means."
+::: {.callout-important appearance="simple"}
+Candidate retrieval determines both **speed** and **recall**. A correct record removed here cannot be rescued by scoring.
 :::
 
-## Reading the score
+::: {.notes}
+- Postcode and house number contribute score and prevent enormous comparisons.
+- Locality fallback is broader, so it only runs for the residue.
+:::
+
+## Step 3 — score agreement by component
 
 ::: {.columns}
-::: {.column width="46%"}
-| Component | Weight |
-|---|---|
+::: {.column width="43%"}
+| Component | Default weight |
+|---|---:|
 | Street name | 40 |
 | Postcode | 20 |
 | Suburb | 15 |
-| Street type | 10 |
-| Number | 10 |
+| Street type / direction | 10 |
+| Number / range / lot | 10 |
 | Flat / level | 5 |
 :::
-::: {.column width="54%"}
-| Total | Read it as |
-|---|---|
-| **90-100** | All components agree |
-| **75-89** | Minor spelling variation |
-| **60-74** | One real discrepancy |
-| **< 60** | Dropped by default (`min_score = 60`) |
-
-`95 = 20 + 15 + 40 + 10 + 10 + 0` - everything right, flat missing.
+::: {.column width="53%"}
+::: {.score-card}
+<span>Postcode</span><strong>20 / 20</strong>
+<span>Suburb</span><strong>15 / 15</strong>
+<span>Street name</span><strong>36 / 40</strong>
+<span>Street type</span><strong>10 / 10</strong>
+<span>Number</span><strong>10 / 10</strong>
+<span>Flat</span><strong>0 / 5</strong>
+<span class="score-total">Total</span><strong class="score-total">91 / 100</strong>
 :::
 :::
+:::
 
-[Precision]{.precision}: read the components, not just the total.
-[Normalisation]{.normalise}: `min_score = 40` is a fine bar.
+- Similar text earns partial credit; conflicting or missing components lose credit
+- `total_score` is weighted agreement, **not a calibrated probability**
+- Custom `weights` must sum to 100
 
 ::: {.notes}
-- Say: the total is a sum of agreements, not a probability. Two 85s can mean very different things.
-- Number / example: postcode + suburb + number + type agreeing with the wrong street is 55 before any street-name credit; the street name is what carries the match.
-- Watch out: the bands are guidance. Calibrate on a labelled sample of your own data, and note that custom `weights` bypass the match cache.
-- Transition: "Easier to show than to explain."
+- Read components before interpreting the total. Two 85s can describe different risks.
+- Calibrate on labelled examples from the intended population.
 :::
 
-## {background-color="#12405c"}
+## Better addresses are faster addresses
 
-### Live demo 1 - scores {.dim}
+::: {.columns}
+::: {.column width="48%"}
+### Cheap path
+`10 MAIN ROAD, BRISBANE QLD 4000`
+
+postcode + number → tight candidates → score → stop
+
+::: {.metric .good}
+More structure<br><strong>less database work</strong>
+:::
+:::
+::: {.column width="48%"}
+### Expensive path
+`MAIN RD BRISBANE`
+
+state/locality search → broad candidates → fallback → more scoring
+
+::: {.metric .warn}
+Less structure<br><strong>more database work</strong>
+:::
+:::
+:::
+
+**A deliberately difficult benchmark:** 100,001 perturbed addresses, cache disabled
+
+| Parse + standardise | Postcode scoring | Locality fallback | Total |
+|---:|---:|---:|---:|
+| 7.0 s | 656.5 s | 215.5 s | **886.1 s** |
+
+<p class="source">One measured run against a 13.9M-row database; hardware, database scope, alias volume and input quality materially affect timings.</p>
+
+::: {.notes}
+- This benchmark intentionally removes exact/cache wins and uses damaged addresses.
+- Repeated clean inputs can use exact-label and cache paths. Custom weights and `max_results > 1` bypass the one-result cache.
+:::
+
+## Step 4 — return a useful audit table
 
 ```r
-# Full breakdown for one messy address
-gnaf_match("unit 110 120 musgrave Road red hill 4000 QLD", con)[
-  , .(address_label, total_score, score_postcode, score_suburb,
-      score_street_name, score_street_type, score_number, score_flat)]
-
-# Wrong street type: Avenue typed, Drive in G-NAF
-gnaf_match("13 Fairway Avenue, Clear Island Waters QLD 4226", con,
-           min_score = 0)[, .(address_label, total_score, score_street_type)]
-
-# A number that does not exist on the street stays unmatched
-gnaf_match("999 Musgrave Road, Red Hill QLD 4059", con, min_score = 0)
+results[, .(
+  input_id, input_raw, input_standardised, matched,
+  address_detail_pid, address_label, longitude, latitude,
+  alias_type, total_score, score_street_name,
+  score_number, match_rank
+)]
 ```
 
-::: {.notes}
-- Say: run these three in order and read the component numbers aloud.
-- Number / example: the first one shows postcode fallback fixing 4000 to 4059 with the suburb; the second shows street type costing exactly its weight.
-- Watch out: the money shot is the third one: even at `min_score = 0` a non-existent number is not forced onto a neighbour.
-- Transition: "Everything that just happened past the postcode join is fallbacks and aliases."
+::: {.columns}
+::: {.column width="48%"}
+### For automation
+Stable PID, coordinates, source, rank and selected geography columns.
+:::
+::: {.column width="48%"}
+### For audit
+Raw and standardised text, matched label, relationships and six component scores.
+:::
 :::
 
-## Fallbacks and aliases
-
-- **Locality fallback**: best score <= 90 and the suburb disagrees, so the suburb name is fuzzy-matched to recover the right postcode and the input is re-scored
-- **Deferred alias search**: street and address aliases when the street name is weak; locality aliases when the locality is weak
-- **Street-only fallback**: `street_only_fallback = TRUE` matches number-free inputs to a street (needs `gnaf_build_street_aliases()`)
-
-| `alias_type` | Meaning |
-|---|---|
-| `LOCALITY:SYN`, `LOCALITY:SR` | Suburb synonyms and street-in-suburb references (the bulk of alias rows) |
-| `STREET:SYN`, `STREET:ALT` | Street renamed or spelt differently |
-| `ADDRESS:SYN`, `ADDRESS:RA` | The same dwelling under another address or number range |
-| `street_only` | Built by gnafr for the street-level fallback |
-
-```r
-gnaf_match(x, con, include_aliases = TRUE)              # default: aliases compete with core rows
-gnaf_match(x, con, alias_types = c(NA, "LOCALITY:SYN"))  # core rows plus suburb synonyms only
-```
-
-[Normalisation]{.normalise}: turn street-only on. [Precision]{.precision}: check `alias_type` on every match.
-
 ::: {.notes}
-- Say: aliases are real G-NAF rows that compete with the core rows; a match can legitimately land on one.
-- Number / example: locality synonyms are the majority of the loaded table, which is why they are only searched when the locality is weak.
-- Watch out: `include_aliases = FALSE` and an explicit `alias_types` are mutually exclusive; pick one.
-- Transition: "For the precision people, an alias hit is the start of the answer, not the answer."
+- Unmatched inputs remain as rows, making joins to source data predictable.
+- `max_results > 1` provides alternatives with deterministic ranks.
 :::
 
-## Resolving an alias to the real dwelling
+## IVO Street: match, dwelling and property
 
 ```{mermaid}
-%%| fig-width: 12
-%%| fig-height: 3
+%%| fig-height: 3.9
 %%{init: {'themeVariables': {'fontSize': '16px'}}}%%
 flowchart LR
-  A["27 Ivo Street<br/>Nundah 4012"] --> B["alias row<br/>ADDRESS:SYN"]
-  B -->|return_principal| C["principal<br/>Unit 2 16 Wally St"]
-  C -->|return_primary| D["primary<br/>16 Wally Street"]
-  B -.->|kept as| E["matched_*<br/>columns"]
+  A["INPUT<br/>27 Ivo Stret<br/>Nundah 4012"] --> B["MATCHED ALIAS<br/>27 IVO STREET<br/><b>GAQLD155672969</b>"]
+  B -->|principal_pid| C["REAL UNIT<br/>UNIT 2 16 WALLY STREET<br/><b>GAQLD158440593</b>"]
+  C -->|primary_pid| D["PARENT PROPERTY<br/>16 WALLY STREET<br/><b>GAQLD156981590</b>"]
 ```
 
-```r
-gnaf_match("27 Ivo Street, Nundah QLD 4012", con,
-           return_principal = TRUE, return_primary = TRUE)
-#> address_label:          16 WALLY STREET, NUNDAH QLD 4012        (the property)
-#> matched_address_label:  27 IVO STREET, NUNDAH QLD 4012          (the ADDRESS:SYN alias that scored)
-```
+| Option | Address fields describe | Why use it? |
+|---|---|---|
+| default | alias that won | Explain exactly what matched |
+| `resolve_principal = TRUE` | alias + `principal_*` | Compare both descriptions |
+| `return_principal = TRUE` | non-alias unit | Link spellings to one dwelling |
+| plus `return_primary = TRUE` | parent property | Aggregate units to a site |
 
-- `return_principal` swaps in the non-alias record; `return_primary` then swaps in the parent property
-- `resolve_principal = TRUE` instead adds `principal_*` columns and leaves the match untouched
-
-[Precision]{.precision}: this is how you count dwellings, not spellings.
-
-::: {.notes}
-- Say: three real G-NAF rows for one unit: the alias, the principal, and the primary property it sits in.
-- Number / example: Ivo Street is a synonym for Unit 2, 16 Wally Street; the primary is 16 Wally Street itself.
-- Watch out: the score and rank still describe the row that matched, and the `matched_*` columns keep it; the cache stores the original candidate too, so the options can change between calls.
-- Transition: "Once you know which dwelling, you usually want to know where it sits."
+::: {.callout-note appearance="simple"}
+When address fields are replaced, `matched_*` preserves the alias that was scored. Score and rank always describe that original candidate.
 :::
 
-## Saved geographies
-
-```r
-# Compute a layer once from polygons and save it in the database
-gnaf_add_geography(con, "sa2_2021", sa2_sf,
-                   return_cols = c(sa2_code = "SA2_CODE21", sa2_name = "SA2_NAME21"))
-
-# ...or register a table you already have
-gnaf_register_geography(con, "sa2_2021", "gnaf_sa2_2021", points_crs = 7844)
-
-# Then ask for it by name on every match
-results <- gnaf_match(addresses, con, geographies = "sa2_2021")   # TRUE = every layer
-```
-
-- Point-in-polygon runs once per database, not once per run
-- Columns are appended for the final returned PID, after principal/primary resolution
-- `NA` where no polygon contains the point; no nearest-polygon guessing
-
-[Normalisation]{.normalise}: SA2 or LGA on every row, for free, forever.
-
 ::: {.notes}
-- Say: the expensive spatial join happens once against the G-NAF points and is stored beside them.
-- Number / example: `gnaf_list_geographies(con)` shows what is registered; `spatial_lookup()` still exists for ad hoc polygons.
-- Watch out: a geography column that collides with an existing results column is an error, not a silent overwrite.
-- Transition: "Now the part everyone actually spends their time on: looking at the results."
+- Principal removes the alias; primary moves from a secondary/unit record to its parent property.
 :::
 
-## Reviewing results
+## Extend the reference data
 
 ::: {.columns}
 ::: {.column width="48%"}
-### `gnaf_app(con)`
+### Add operational addresses
+```r
+gnaf_add(con, pli_addresses)
+results <- gnaf_match(
+  addresses, con,
+  include_custom = TRUE
+)
+```
 
-- Paste addresses, run the same `gnaf_match()`
-- Input-vs-matched diff on every row
-- Jaro-Winkler, Jaccard and Levenshtein text scores alongside the component scores
+- PLI, service locations or internal sites
+- Same parser, matching and scores
+- Marked with `source = "custom"`
 :::
 ::: {.column width="48%"}
-### `gnaf_threshold_filter(results)`
-
-- A range slider on **every** score, text scores included
-- In-scope and out-of-scope tables move live
-- Flag individual inputs as false positives
-- Done prints the filter as code
-:::
-:::
-
+### Add saved geographies
 ```r
-gnaf_threshold_filter(results)
-#> ## data.table
-#> results[matched == TRUE & total_score >= 80 & score_street_name >= 30 & !input_id %in% c(41)]
-#> ## dplyr
-#> results |> dplyr::filter(matched == TRUE, total_score >= 80, score_street_name >= 30, ...)
+gnaf_add_geography(
+  con, "sa2_2021", sa2,
+  return_cols = c(
+    sa2_code = "SA2_CODE21",
+    sa2_name = "SA2_NAME21"
+  )
+)
+gnaf_match(x, con, geographies = "sa2_2021")
 ```
 
-[Precision]{.precision}: find the false positives. [Normalisation]{.normalise}: find the bar.
-
-::: {.notes}
-- Say: the threshold argument stops being an opinion in a meeting and becomes a line of code in the repo.
-- Number / example: flagging a row excludes its whole `input_id`, every rank, because that is what a false positive means.
-- Watch out: thresholds on the text scores wrap the result in `gnaf_text_scores()` in the printed code, so the snippet runs as-is on a plain `gnaf_match()` result.
-- Transition: "Let me do it rather than describe it."
+- Point-in-polygon computed once
+- Joined after principal / primary resolution
+:::
 :::
 
-## {background-color="#12405c"}
-
-### Live demo 2 - threshold filter {.dim}
-
-```r
-results <- gnaf_match(sample_addresses, con, min_score = 0)
-
-gnaf_threshold_filter(results)
-# drag total_score and street name; watch rows cross over
-# flag one false positive; press Done; paste the printed line
-```
-
 ::: {.notes}
-- Say: match once at `min_score = 0` so the app has the full distribution to work with.
-- Number / example: drag total score up to about 80 and watch the out-of-scope table fill from the bottom of the in-scope one.
-- Watch out: flag one row, then show the `!input_id %in% c(...)` term appear in the code panel.
-- Transition: "Which brings us back to the two audiences and what each should actually run."
+- Custom records need structured fields, but not the full raw G-NAF schema.
+- Saved geographies are snapshots; rebuild after coordinate or reference-data changes.
 :::
 
-## Two recipes, one file
+## Review the population, not just one row
 
 ::: {.columns}
-::: {.column width="50%"}
-### [High precision]{.precision}
-
+::: {.column width="48%"}
+::: {.card}
+### `gnaf_app()`
+- Enter addresses and match interactively
+- Compare raw, standardised and matched text
+- Inspect component and whole-string scores
+- Download candidate results
+:::
+::: {.card}
+### Static diff output
 ```r
-gnaf_match(x, con,
-  max_results = 3,
-  min_score = 90,
-  weights = list(postcode = 15, suburb = 10,
-                 street_name = 35, street_type = 5,
-                 number = 25, flat = 10),
-  return_principal = TRUE)
+gnaf_threshold_filter(
+  results,
+  html = "review.html"
+)
+```
+Lightweight review across a very large result.
+:::
+:::
+::: {.column width="48%"}
+::: {.card}
+### `gnaf_threshold_filter()`
+- Move score ranges and watch scope change
+- Flag known false positives
+- Compare Jaro-Winkler, Jaccard and Levenshtein scores
+- Print the final rule as code
+:::
+```r
+# Generated, reproducible rule
+results[
+  matched == TRUE &
+  total_score >= 85 &
+  score_number >= 7
+]
 ```
 :::
-::: {.column width="50%"}
-### [Normalisation]{.normalise}
-
-```r
-gnaf_match(x, con,
-  max_results = 1,
-  min_score = 40,
-  street_only_fallback = TRUE,
-  include_aliases = TRUE)[
-  , .(input_raw, address_label,
-      longitude, latitude)]
-```
 :::
-:::
-
-<p class="dim">Or match once at <code>min_score = 0</code>, keep every column, and let each consumer filter with the line the threshold app printed.</p>
 
 ::: {.notes}
-- Say: same engine, same database file, two argument sets.
-- Number / example: the precision recipe moves 15 points of weight from street name onto number and flat because that is where a wrong dwelling shows up.
-- Watch out: custom weights mean no match cache; if the weights are stable, tell me and I will key the cache on them.
-- Transition: "Filtering is free, re-matching is not. Match once. Here is how to get it."
+- Threshold selection becomes evidence and code rather than an undocumented meeting decision.
+- Whole-string scores supplement the component scores.
 :::
 
-## Where to get it, and what is next
+## Usage 1 — install and build
 
 ```r
-devtools::install_github("KyleHaynes/gnafr")
+# Install
+remotes::install_github("KyleHaynes/gnafr")
+library(gnafr)
+
+# Connect to a persistent database
+con <- gnaf_connect("C:/data/gnaf.duckdb")
+
+# Preferred: raw G-NAF Standard PSV product
+gnaf_build_db(
+  con,
+  gnaf_dir = "C:/data/G-NAF AUGUST 2026/Standard",
+  states = c("QLD", "NSW")
+)
+
+# Alternative: flattened G-NAF Core CSV
+# gnaf_init(con)
+# gnaf_load(con, "C:/data/gnaf-core.csv")
 ```
 
-- Docs: <https://kylehaynes.github.io/gnafr>
-- Version 0.1, one maintainer, a plain DuckDB file you can open with anything
-- Next: cache keyed on custom weights; alias search on every match, not just weak ones
-- **Send me ten addresses it gets wrong.**
+::: {.notes}
+- Database preparation is not repeated before every match.
+- Use `gnaf_status(con)` to confirm counts and `gnaf_disconnect(con)` when finished.
+:::
 
-### Questions
+## Usage 2 — start simple, then expose choices
+
+```r
+results <- gnaf_match(
+  addresses, con,
+  max_results = 1L,
+  min_score = 80L,
+  include_aliases = TRUE,
+  include_custom = TRUE,
+  return_principal = TRUE,
+  street_only_fallback = FALSE,
+  geographies = "sa2_2021"
+)
+```
+
+| If you need… | Change… |
+|---|---|
+| alternatives for review | `max_results = 3L` |
+| a broad diagnostic population | lower `min_score`, then filter |
+| exact alias control | set `alias_types` explicitly |
+| parent-property output | `return_primary = TRUE` |
+| number-free street matches | `street_only_fallback = TRUE` |
+| repeat-run speed | keep settings that permit `cache = TRUE` |
 
 ::: {.notes}
-- Say: it is early, it is mine, and the data file is a standard DuckDB database you can query directly.
-- Number / example: the whole build for a state is minutes; the whole API for the common case is one call.
-- Watch out: the most useful thing you can do today is send me addresses that fail, with the answer you expected.
-- Transition: open the floor.
+- Start with defaults and measure. Each option has a semantic or performance consequence.
+- `include_aliases = FALSE` cannot be combined with explicit `alias_types`.
 :::
+
+## A practical production pattern
+
+```r
+# 1. Match broadly enough to study the distribution
+candidates <- gnaf_match(
+  source_dt$address, con,
+  max_results = 3L,
+  min_score = 60L,
+  return_principal = TRUE
+)
+
+# 2. Review a labelled sample and choose explicit rules
+gnaf_threshold_filter(candidates)
+
+# 3. Apply the accepted rule and join by input_id
+accepted <- candidates[
+  match_rank == 1L &
+  total_score >= 85L &
+  score_street_name >= 30L
+]
+final <- accepted[source_dt[, source_row := .I],
+                  on = .(input_id = source_row)]
+```
+
+::: {.callout-tip appearance="simple"}
+Keep the full candidate table as an audit artefact. Filtered outputs are reproducible; discarded evidence is not.
+:::
+
+::: {.notes}
+- Replace example thresholds with rules learned from a labelled sample.
+- Join on `input_id`; address strings may not be unique.
+:::
+
+## Three ideas to take away
+
+::: {.three-ideas}
+::: {.idea}
+<span class="idea-number">1</span>
+### Own the reference data
+G-NAF and custom records live in a persistent, portable DuckDB file.
+:::
+::: {.idea}
+<span class="idea-number">2</span>
+### Keep judgement visible
+Scores, alternatives and relationships explain the result.
+:::
+::: {.idea}
+<span class="idea-number">3</span>
+### Tune for the use case
+Precision, coverage and output entity are explicit choices.
+:::
+:::
+
+### Questions — and difficult addresses welcome
+
+<p class="source">Package: <a href="https://github.com/KyleHaynes/gnafr">github.com/KyleHaynes/gnafr</a></p>
+
+::: {.notes}
+- Ask for examples where the expected PID or address is known.
+- If time permits, open the threshold app or run the IVO example live.
+:::
+
+<script>
+// Ensure the reveal container has focus so keyboard navigation works
+document.addEventListener('DOMContentLoaded', function () {
+  try {
+    var r = document.querySelector('.reveal');
+    if (r) {
+      r.setAttribute('tabindex', '-1');
+      r.focus({ preventScroll: true });
+    } else {
+      document.body.setAttribute('tabindex', '-1');
+      document.body.focus({ preventScroll: true });
+    }
+    // trigger a layout pass in case sizing/layout is needed
+    if (window.Reveal && typeof window.Reveal.layout === 'function') {
+      window.Reveal.layout();
+    }
+  } catch (e) {
+    console.warn('focus helper failed', e);
+  }
+});
+</script>

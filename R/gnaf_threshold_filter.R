@@ -29,30 +29,51 @@
 #' `x` is - counts and the generated filter always describe every row
 #' regardless of `max_rows`.
 #'
+#' \strong{`html`} skips the interactive app entirely and instead renders every
+#' row of `x` straight to a single self-contained HTML file: an input/matched
+#' diff table styled like the app's own diff cells (same
+#' [jsdiffr::diff_to_html()] markup and CSS), but a plain static table with no
+#' Shiny, reactable or htmlwidget behind it. There is no `max_rows` cap in
+#' this mode - it is the lightweight option for browsing diffs across very
+#' large results (hundreds of thousands of rows) where the interactive app's
+#' per-row widget cost isn't worth paying.
+#'
 #' @param x A `data.table` returned by [gnaf_match()].
-#' @param name Object name used in the generated code. Defaults to the
-#'   expression passed as `x`, and can be edited inside the app.
+#' @param name Object name used in the generated code, and in the page title
+#'   when `html` is set. Defaults to the expression passed as `x`, and can be
+#'   edited inside the app.
 #' @param max_rows Maximum rows rendered in each table, and the dominant cost
 #'   of every redraw (each row renders an input/matched diff). Default `200L`;
 #'   raise it if you want to browse more rows at once and don't mind slower
-#'   redraws, lower it for very large `x` on a slow machine.
+#'   redraws, lower it for very large `x` on a slow machine. Ignored when
+#'   `html` is set.
 #' @param text_scores If `TRUE` (default), compute [gnaf_text_scores()] so
 #'   Jaro-Winkler/Jaccard/Levenshtein thresholds are available. This is the
 #'   one setup cost that scales with `nrow(x)`; set `FALSE` to skip it for very
-#'   large results when only the component scores are needed.
+#'   large results when only the component scores are needed. Ignored when
+#'   `html` is set.
 #' @param plot_sample Maximum rows used to draw the score-distribution
 #'   histograms. Default `50000L`; sampled fresh each time thresholds change,
 #'   since the shape is unaffected by sampling at that size and it keeps the
-#'   plot responsive for large `x`.
-#' @param launch.browser Passed to [shiny::runApp()] when `run = TRUE`.
+#'   plot responsive for large `x`. Ignored when `html` is set.
+#' @param html If not `FALSE` (the default), skip the Shiny app and render a
+#'   lightweight static HTML diff table for every row of `x` instead - see
+#'   Details. `TRUE` writes to a temporary file and (per `launch.browser`)
+#'   opens it; a single string instead writes to that file path.
+#' @param launch.browser Passed to [shiny::runApp()] when `run = TRUE`. When
+#'   `html` is set, controls whether the rendered file is opened with
+#'   [utils::browseURL()] instead.
 #' @param run If `TRUE` (default), launches the app, prints the resulting code
 #'   when it closes and returns it invisibly. If `FALSE`, returns the
-#'   [shiny::shinyApp()] object.
+#'   [shiny::shinyApp()] object. When `html` is set, `run = TRUE` writes (and
+#'   maybe opens) the file and returns its path invisibly, while `run = FALSE`
+#'   returns the rendered HTML as a string instead of writing anything.
 #' @return Invisibly, an object of class `gnaf_threshold_filter`: a list with
 #'   `code` (`$data.table` and `$dplyr`, each holding `in_scope` and
 #'   `out_of_scope` snippets), `conditions`, `thresholds`, `matched_only`,
 #'   `top_rank_only`, `flagged_input_ids`, `n_in_scope` and `n_out_of_scope`.
-#'   Printing it shows the counts and both snippets again.
+#'   Printing it shows the counts and both snippets again. When `html` is set,
+#'   see `run` above instead.
 #' @examples
 #' \dontrun{
 #' results <- gnaf_match(addresses, con)
@@ -62,13 +83,15 @@
 #'
 #' # 500k+ rows, component scores only:
 #' gnaf_threshold_filter(results, text_scores = FALSE)
+#'
+#' # Lightweight static diff table for a very large result, opened in browser:
+#' gnaf_threshold_filter(results, html = TRUE)
 #' }
 #' @export
 gnaf_threshold_filter <- function(x, name = deparse(substitute(x)),
                                   max_rows = 200L, text_scores = TRUE,
-                                  plot_sample = 50000L,
+                                  plot_sample = 50000L, html = FALSE,
                                   launch.browser = interactive(), run = TRUE) {
-  .gnaf_require_app_packages()
   name <- paste(name, collapse = "")
 
   if (!is.data.table(x)) stop("'x' must be a data.table returned by gnaf_match()")
@@ -79,6 +102,21 @@ gnaf_threshold_filter <- function(x, name = deparse(substitute(x)),
     stop("'x' is missing columns required by the app: ",
          paste(missing_cols, collapse = ", "))
   }
+  html_ok <- (is.logical(html) && length(html) == 1L && !is.na(html)) ||
+    (is.character(html) && length(html) == 1L && !is.na(html) && nzchar(html))
+  if (!html_ok) stop("'html' must be TRUE, FALSE, or a single file path", call. = FALSE)
+
+  if (!isFALSE(html)) {
+    page <- .gnaf_threshold_html_page(x, name)
+    if (!isTRUE(run)) return(page)
+    path <- if (is.character(html)) html else tempfile("gnafr_diff_", fileext = ".html")
+    writeLines(page, path, useBytes = TRUE)
+    if (isTRUE(launch.browser)) utils::browseURL(path)
+    cli::cli_alert_success("Wrote diff table for {format(nrow(x), big.mark = ',')} row(s) to {.path {path}}")
+    return(invisible(path))
+  }
+
+  .gnaf_require_app_packages()
   max_rows <- .as_positive_integer(max_rows, "max_rows")
   plot_sample <- .as_positive_integer(plot_sample, "plot_sample")
   if (!is.logical(text_scores) || length(text_scores) != 1L || is.na(text_scores))
@@ -607,6 +645,187 @@ print.gnaf_threshold_filter <- function(x, ...) {
     "# in scope\n", snippets[["in_scope"]], "\n\n",
     "# out of scope\n", snippets[["out_of_scope"]]
   )
+}
+
+# Static counterpart to .gnaf_threshold_table(): every row of x rendered as
+# one plain HTML table, no reactable/htmlwidget involved, so building and
+# opening it stays cheap regardless of nrow(x). Reuses .gnaf_diff_cell() /
+# .gnaf_diff_pair_columns() (defined in app.R) so the diff markup and colours
+# match the interactive app's own diff column exactly.
+.gnaf_threshold_html_page <- function(x, name, pair = "std_match",
+                                      method_fn = jsdiffr::diff_chars) {
+  pair_cols <- .gnaf_diff_pair_columns(pair)
+  display <- copy(x)
+  setorder(display, -total_score, na.last = TRUE)
+
+  left <- display[[pair_cols$left]]
+  right <- display[[pair_cols$right]]
+  ids <- display$input_id
+  ranks <- display$match_rank
+  totals <- display$total_score
+
+  rows <- vapply(seq_along(left), function(i) {
+    sprintf(
+      "<tr><td>%s</td><td>%s</td><td>%s</td><td>%s</td><td>%s</td><td>%s</td></tr>",
+      .gnaf_html_escape(ids[i]),
+      if (is.na(ranks[i])) "-" else ranks[i],
+      if (is.na(totals[i])) "-" else totals[i],
+      .gnaf_html_escape(if (is.na(left[i])) "" else left[i]),
+      .gnaf_html_escape(if (is.na(right[i])) "" else right[i]),
+      .gnaf_diff_cell(left[i], right[i], method_fn)
+    )
+  }, character(1))
+
+  n_matched <- sum(display$matched %in% TRUE)
+  metrics <- sprintf(
+    paste0(
+      '<div class="metric-grid">',
+      '<div class="metric-card"><div class="metric-label">Rows</div><div class="metric-value">%s</div></div>',
+      '<div class="metric-card"><div class="metric-label">Matched</div><div class="metric-value">%s</div></div>',
+      '<div class="metric-card metric-card--out"><div class="metric-label">Unmatched</div><div class="metric-value">%s</div></div>',
+      "</div>"
+    ),
+    format(nrow(display), big.mark = ","),
+    format(n_matched, big.mark = ","),
+    format(nrow(display) - n_matched, big.mark = ",")
+  )
+
+  # data-type flags which columns .gnaf_diff_sort_script() below can sort
+  # numerically vs as text; "none" (the Diff column) is left unsortable since
+  # its content is diff markup, not a plain value.
+  header <- paste0(
+    '<th data-type="num">Input ID</th><th data-type="num">Rank</th>',
+    '<th data-type="num">Total score</th>',
+    '<th data-type="text">', .gnaf_html_escape(pair_cols$left_label), "</th>",
+    '<th data-type="text">', .gnaf_html_escape(pair_cols$right_label), "</th>",
+    '<th data-type="none">Diff</th>'
+  )
+  # Explicit starting widths (table-layout: fixed) is what lets the resize
+  # handles adjust one column without reflowing the rest; Diff gets whatever
+  # space is left over.
+  colgroup <- paste0(
+    '<colgroup><col style="width:70px"><col style="width:60px">',
+    '<col style="width:90px"><col style="width:220px"><col style="width:220px"><col></colgroup>'
+  )
+  table_html <- paste0(
+    '<div class="table-scroll"><table class="diff-table">', colgroup,
+    "<thead><tr>", header, "</tr></thead><tbody>", paste0(rows, collapse = ""),
+    "</tbody></table></div>"
+  )
+
+  # jsdiffr::diff_css_default() supplies the added/removed span colours used
+  # inside every .diff-cell; the rest mirrors the app's own panel/metric-card
+  # styling (see the UI's <head> above) so the two look the same.
+  css <- paste0(
+    jsdiffr::diff_css_default(), "\n",
+    "body {font-family: -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif; background: #eef2f7; margin: 0; padding: 24px;}\n",
+    ".panel {background: #f8fbff; border: 1px solid #d9e2ec; border-radius: 14px; padding: 16px 18px;}\n",
+    ".panel-title {font-size: 16px; font-weight: 700; color: #102a43; margin: 0 0 12px;}\n",
+    ".metric-grid {display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; margin: 0 0 18px; max-width: 640px;}\n",
+    ".metric-card {background: linear-gradient(135deg, #102a43, #1f5f8b); color: #fff; border-radius: 14px; padding: 14px 16px;}\n",
+    ".metric-card--out {background: linear-gradient(135deg, #7f1d1d, #b45309);}\n",
+    ".metric-label {font-size: 12px; text-transform: uppercase; letter-spacing: 0.08em; opacity: 0.8;}\n",
+    ".metric-value {font-size: 26px; font-weight: 700; line-height: 1.2; margin-top: 6px;}\n",
+    ".table-scroll {overflow-x: auto; max-width: 100%;}\n",
+    ".diff-table {width: 100%; border-collapse: collapse; font-size: 12px; background: #fff; table-layout: fixed;}\n",
+    ".diff-table th, .diff-table td {padding: 6px 8px; border: 1px solid #d9e2ec; vertical-align: top; text-align: left; overflow-wrap: break-word;}\n",
+    ".diff-table th {background: #eef2f7; position: sticky; top: 0; font-size: 11px; text-transform: uppercase; letter-spacing: 0.05em; user-select: none;}\n",
+    ".diff-table th[data-type]:not([data-type=\"none\"]) {cursor: pointer;}\n",
+    ".diff-table th.sort-asc::after {content: \" \\25B2\"; font-size: 9px;}\n",
+    ".diff-table th.sort-desc::after {content: \" \\25BC\"; font-size: 9px;}\n",
+    ".diff-table th .col-resizer {position: absolute; top: 0; right: -3px; width: 6px; height: 100%; cursor: col-resize; z-index: 2;}\n",
+    ".diff-table th .col-resizer:hover, .diff-table th .col-resizer.resizing {background: rgba(31, 95, 139, 0.35);}\n",
+    ".diff-table tr:nth-child(even) td {background: #f8fbff;}\n",
+    ".diff-cell {padding: 0;}\n",
+    ".diff-cell .jsdiff-pre {white-space: pre-wrap; font-size: 12px; margin: 0;}\n"
+  )
+
+  paste0(
+    '<!DOCTYPE html><html><head><meta charset="utf-8"><title>gnafr diff - ',
+    .gnaf_html_escape(name), "</title><style>", css, "</style></head><body>",
+    '<div class="panel"><div class="panel-title">', .gnaf_html_escape(name), " &mdash; input vs matched diff</div>",
+    metrics, table_html, "</div>",
+    "<script>", .gnaf_diff_table_script(), "</script>",
+    "</body></html>"
+  )
+}
+
+# Vanilla JS (no dependency) giving the static table click-to-sort headers
+# (data-type="num"/"text"; "none" - the Diff column - opts out since its
+# content is markup, not a plain value) and drag-to-resize columns via the
+# <colgroup> widths set in .gnaf_threshold_html_page(). Both operate directly
+# on the DOM (array sort + one reflow via a DocumentFragment, or a single
+# <col> width write) so cost doesn't scale with how large the table gets
+# beyond the sort itself - no widget/framework needed.
+.gnaf_diff_table_script <- function() {
+  paste0(
+    "(function() {\n",
+    "  var table = document.querySelector('.diff-table');\n",
+    "  if (!table) return;\n",
+    "  var tbody = table.tBodies[0];\n",
+    "  var ths = Array.prototype.slice.call(table.tHead.rows[0].cells);\n",
+    "  var cols = Array.prototype.slice.call(table.querySelectorAll('colgroup col'));\n",
+    "  var justResized = false;\n",
+    "  ths.forEach(function(th, i) {\n",
+    "    var handle = document.createElement('span');\n",
+    "    handle.className = 'col-resizer';\n",
+    "    th.appendChild(handle);\n",
+    "    handle.addEventListener('mousedown', function(e) {\n",
+    "      e.preventDefault();\n",
+    "      var startX = e.pageX;\n",
+    "      var startWidth = th.offsetWidth;\n",
+    "      handle.classList.add('resizing');\n",
+    "      function onMove(ev) {\n",
+    "        cols[i].style.width = Math.max(40, startWidth + (ev.pageX - startX)) + 'px';\n",
+    "      }\n",
+    "      function onUp() {\n",
+    "        handle.classList.remove('resizing');\n",
+    "        justResized = true;\n",
+    "        setTimeout(function() { justResized = false; }, 0);\n",
+    "        document.removeEventListener('mousemove', onMove);\n",
+    "        document.removeEventListener('mouseup', onUp);\n",
+    "      }\n",
+    "      document.addEventListener('mousemove', onMove);\n",
+    "      document.addEventListener('mouseup', onUp);\n",
+    "    });\n",
+    "  });\n",
+    "  var sortState = { index: -1, dir: 1 };\n",
+    "  ths.forEach(function(th, i) {\n",
+    "    var type = th.getAttribute('data-type');\n",
+    "    if (!type || type === 'none') return;\n",
+    "    th.addEventListener('click', function(e) {\n",
+    "      if (justResized || e.target.classList.contains('col-resizer')) return;\n",
+    "      var dir = (sortState.index === i) ? -sortState.dir : 1;\n",
+    "      sortState = { index: i, dir: dir };\n",
+    "      ths.forEach(function(h) { h.classList.remove('sort-asc', 'sort-desc'); });\n",
+    "      th.classList.add(dir === 1 ? 'sort-asc' : 'sort-desc');\n",
+    "      var rows = Array.prototype.slice.call(tbody.rows);\n",
+    "      rows.sort(function(a, b) {\n",
+    "        var av = a.cells[i].textContent.trim();\n",
+    "        var bv = b.cells[i].textContent.trim();\n",
+    "        if (type === 'num') {\n",
+    "          var an = parseFloat(av), bn = parseFloat(bv);\n",
+    "          var aNa = isNaN(an), bNa = isNaN(bn);\n",
+    "          if (aNa && bNa) return 0;\n",
+    "          if (aNa) return 1;\n",
+    "          if (bNa) return -1;\n",
+    "          return dir * (an - bn);\n",
+    "        }\n",
+    "        return dir * av.toLowerCase().localeCompare(bv.toLowerCase());\n",
+    "      });\n",
+    "      var frag = document.createDocumentFragment();\n",
+    "      rows.forEach(function(r) { frag.appendChild(r); });\n",
+    "      tbody.appendChild(frag);\n",
+    "    });\n",
+    "  });\n",
+    "})();\n"
+  )
+}
+
+.gnaf_html_escape <- function(x) {
+  x <- gsub("&", "&amp;", as.character(x), fixed = TRUE)
+  x <- gsub("<", "&lt;", x, fixed = TRUE)
+  gsub(">", "&gt;", x, fixed = TRUE)
 }
 
 .gnaf_threshold_title <- function(label, n, max_rows) {
