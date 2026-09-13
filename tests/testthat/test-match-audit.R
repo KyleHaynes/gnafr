@@ -117,3 +117,20 @@ test_that("state matching does not repeat its search through locality fallback",
   expect_identical(out$address_detail_pid, "TARGET")
   expect_identical(out$total_score, 80L)
 })
+
+test_that("a genuine strong match does not trigger the street-number-relaxed fallback", {
+  con <- gnaf_connect(":memory:")
+  on.exit(gnaf_disconnect(con), add = TRUE)
+  gnaf_init(con)
+  suppressMessages(gnaf_add(con, data.table::data.table(
+    address_detail_pid = "TARGET", address_label = "10 MAIN ROAD, BRISBANE QLD 4000",
+    number_first = 10L, street_name = "MAIN", street_type = "ROAD",
+    locality_name = "BRISBANE", state = "QLD", postcode = 4000L
+  )))
+  testthat::local_mocked_bindings(.match_street_number_relaxed_duckdb = function(...) {
+    stop("Redundant street-number-relaxed search")
+  })
+  out <- gnaf_match("10 Main Road, Brisbane QLD 4000", con, cache = FALSE, verbose = FALSE)
+  expect_identical(out$address_detail_pid, "TARGET")
+  expect_identical(out$total_score, 100L)
+})

@@ -11,7 +11,10 @@
 # for exact agreement. Old matches and scores must be recomputed.
 # v9: building-prefixed implicit unit/street-number pairs use the same rule
 # in vectorized and scalar parsing; previous wrong-house matches are stale.
-.CACHE_ALGORITHM_VERSION <- 9L
+# v10: added the street-number-relaxed fallback path (drops the number
+# candidate filter when the parsed street exists but not at that number) -
+# previously-cached wrong-street matches for these inputs are stale.
+.CACHE_ALGORITHM_VERSION <- 10L
 
 #' Show the current state of the match cache
 #'

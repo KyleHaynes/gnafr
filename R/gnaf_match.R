@@ -1,6 +1,6 @@
 #' Match a vector of address strings against the GNAF database
 #'
-#' Uses a four-path strategy:
+#' Uses a five-path strategy:
 #' \enumerate{
 #'   \item \strong{Postcode path} - primary, blocks on the parsed postcode.
 #'   \item \strong{State path} - for inputs with no parseable postcode.
@@ -8,11 +8,22 @@
 #'         weak (score below \code{fallback_threshold}). Uses DuckDB's built-in
 #'         \code{jaro_winkler_similarity} to find the correct postcode from the
 #'         parsed suburb name, then re-scores. Handles wrong or missing postcodes.
+#'   \item \strong{Street-number-relaxed fallback} - for inputs whose best result
+#'         so far is weak specifically because of a poor or absent number match
+#'         (score below \code{fallback_threshold} with a near-zero number score,
+#'         or no result at all). Every path above blocks candidates on the
+#'         parsed number before street name is ever scored, so a real row on the
+#'         correct street at a *different* number is invisible to them no matter
+#'         how strong the rest of the match would be. This path drops the number
+#'         constraint and joins on street name instead, letting the correct
+#'         street (with an honestly low number score) compete on its merits
+#'         against whatever else happened to satisfy the number filter.
 #'   \item \strong{Street-only fallback} - optional; fires for inputs that are
 #'         still unmatched after all other paths. Matches against street-level
 #'         aliases built by \code{gnaf_build_street_aliases}. Useful when a
 #'         specific street number is absent from GNAF but the street itself
-#'         exists.
+#'         exists and \code{street_number_fallback} was disabled or didn't find it
+#'         (e.g. the street name itself needs fuzzy resolution).
 #' }
 #'
 #' @param con DBI connection from \code{gnaf_connect}.
@@ -57,6 +68,11 @@
 #' @param locality_fallback If \code{TRUE} (default), re-searches by locality
 #'   name for unmatched inputs and results below \code{fallback_threshold}
 #'   whose locality component is weak.
+#' @param street_number_fallback If \code{TRUE} (default), re-searches by
+#'   street name (dropping the number-based candidate filter every other path
+#'   uses) for unmatched inputs and results below \code{fallback_threshold}
+#'   whose number component is weak - i.e. the parsed street exists, just not
+#'   at the requested number. See Details.
 #' @param street_only_fallback If \code{TRUE}, inputs still unmatched after all
 #'   other paths are re-matched against street-level aliases
 #'   (\code{alias_type = "street_only"}) in \code{gnaf_addresses}. Requires
@@ -190,7 +206,8 @@ gnaf_match <- function(addresses, con, max_results = 1L, min_score = 60L,
   cache_usable <- isTRUE(cache) && cache_schema_current &&
     max_results == 1L &&
     isTRUE(include_custom) && is.null(alias_types) && isTRUE(normalize) &&
-    isTRUE(locality_fallback) && !isTRUE(street_only_fallback) &&
+    isTRUE(locality_fallback) && isTRUE(street_number_fallback) &&
+    !isTRUE(street_only_fallback) &&
     identical(as.numeric(fallback_threshold), 90) &&
     identical(weights, .validate_match_weights(.default_match_weights()))
 
@@ -446,7 +463,63 @@ gnaf_match <- function(addresses, con, max_results = 1L, min_score = 60L,
   }
 
   # ------------------------------------------------------------------
-  # Path 4: street-only fallback for inputs still unmatched after all paths
+  # Path 4: street-number-relaxed fallback. The number pre-filter shared by
+  # every path above (.number_prefilter_sql()) excludes a candidate from the
+  # SQL join - before street name is ever scored - whenever its number
+  # doesn't match or overlap the input's. A real row on the correct street at
+  # a *different* number is therefore invisible to every path above, no
+  # matter how strong the street/suburb/postcode match would otherwise be.
+  # This path drops the number constraint and joins on street_name instead,
+  # for inputs whose best result so far is weak - letting the already-correct
+  # scoring formula decide whether the real street (right name, honestly-low
+  # number score) beats whatever else happened to satisfy the number filter.
+  #
+  # Deliberately not conditioned on the current best candidate's own
+  # score_number: the winning candidate under the old number-first filter
+  # necessarily has a matching/overlapping number (that's how it got
+  # through), so its score_number is often already full even when its street
+  # is wrong - checking it would almost never catch the exact bug this path
+  # exists to fix. A plain weak-total-score bar (mirroring locality
+  # fallback's) lets the street-name search itself decide whether re-running
+  # helps; if the parsed street has no better row anywhere, it simply finds
+  # nothing and the existing result stands.
+  # ------------------------------------------------------------------
+  if (isTRUE(street_number_fallback)) {
+    combined_so_far <- rbindlist(
+      Filter(function(r) !is.null(r) && nrow(r) > 0L,
+             results[c("postcode", "no_postcode", "locality")]),
+      fill = TRUE, use.names = TRUE
+    )
+    best_overall <- if (nrow(combined_so_far) > 0L) {
+      ordered <- copy(combined_so_far)
+      setorder(ordered, input_id, -total_score, address_detail_pid)
+      ordered[, .SD[1L], by = input_id]
+    } else {
+      data.table(input_id = integer(), total_score = integer())
+    }
+    weak_ids <- best_overall[total_score <= fallback_threshold, input_id]
+    zero_ids <- match_inputs[!input_id %in% best_overall$input_id, input_id]
+    snr_ids <- unique(c(weak_ids, zero_ids))
+    snr_parse <- match_inputs[
+      input_id %in% snr_ids & !is.na(in_street_name) &
+      (!is.na(in_postcode) | !is.na(in_state))
+    ]
+    if (nrow(snr_parse) > 0L) {
+      .cli_match_step(verbose, sprintf(
+        "Running street-number-relaxed fallback for %s input(s).",
+        cli::col_magenta(format(nrow(snr_parse), big.mark = ","))
+      ))
+      snr_path <- .match_street_number_relaxed_duckdb(
+        con, snr_parse, max_results, min_score, weights, include_custom,
+        verbose, alias_types
+      )
+      results[["street_number_relaxed"]]     <- snr_path$matches
+      diagnostics[["street_number_relaxed"]] <- snr_path$diagnostics
+    }
+  }
+
+  # ------------------------------------------------------------------
+  # Path 5: street-only fallback for inputs still unmatched after all paths
   # ------------------------------------------------------------------
   if (isTRUE(street_only_fallback) &&
       (is.null(alias_types) || "street_only" %in% alias_types)) {
@@ -1198,6 +1271,73 @@ WHERE r.match_rank <= %d
     )
     res <- .combine_path_results(res, custom, max_results)
   }
+  res
+}
+
+# Street-number-relaxed fallback: the number pre-filter shared by every path
+# above (.number_prefilter_sql()) excludes a candidate from the SQL join -
+# before street name is ever scored - whenever its number doesn't match or
+# overlap the input's. A real row on the correct street at a *different*
+# number is therefore invisible to every path above, no matter how strong the
+# street/suburb/postcode match would otherwise be, so a coincidentally
+# numbered but wrong street can win by default. Drops the number constraint
+# entirely and joins on street_name instead, so .run_duckdb_score_query()'s
+# existing, already-calibrated scoring can compare "right street, honestly
+# low number score" against whatever else was found on its own merits -
+# nothing about scoring changes here, only which candidates are visible to it.
+.match_street_number_relaxed_duckdb <- function(con, inputs_dt, max_results, min_score,
+                                                weights, include_custom,
+                                                verbose = FALSE, alias_types = NULL) {
+  if (nrow(inputs_dt) == 0L) return(.empty_path_result())
+
+  has_pc <- inputs_dt[!is.na(in_postcode)]
+  no_pc  <- inputs_dt[is.na(in_postcode) & !is.na(in_state)]
+
+  alias_sql <- .alias_type_sql(alias_types)
+  pre_filter <- paste("TRUE", if (!is.null(alias_sql)) paste("AND", alias_sql) else "")
+
+  res <- .empty_path_result()
+
+  if (nrow(has_pc) > 0L) {
+    duckdb::duckdb_register(con, "__gnafr_snr_pc__", has_pc, overwrite = TRUE)
+    on.exit(try(duckdb::duckdb_unregister(con, "__gnafr_snr_pc__"), silent = TRUE))
+    join_on <- "g.postcode = i.in_postcode AND g.street_name = i.in_street_name"
+    pc_res <- .run_duckdb_score_query(
+      con, "__gnafr_snr_pc__", "gnaf_addresses",
+      join_on, pre_filter, weights, max_results, min_score, verbose,
+      label = "gnaf_addresses (street-number relaxed, postcode)"
+    )
+    res <- .combine_path_results(res, pc_res, max_results)
+    if (include_custom && .table_has_rows(con, "custom_addresses")) {
+      pc_custom <- .run_duckdb_score_query(
+        con, "__gnafr_snr_pc__", "custom_addresses",
+        join_on, pre_filter, weights, max_results, min_score, verbose,
+        label = "custom_addresses (street-number relaxed, postcode)"
+      )
+      res <- .combine_path_results(res, pc_custom, max_results)
+    }
+  }
+
+  if (nrow(no_pc) > 0L) {
+    duckdb::duckdb_register(con, "__gnafr_snr_st__", no_pc, overwrite = TRUE)
+    on.exit(try(duckdb::duckdb_unregister(con, "__gnafr_snr_st__"), silent = TRUE), add = TRUE)
+    join_on <- "g.state = i.in_state AND g.street_name = i.in_street_name"
+    st_res <- .run_duckdb_score_query(
+      con, "__gnafr_snr_st__", "gnaf_addresses",
+      join_on, pre_filter, weights, max_results, min_score, verbose,
+      label = "gnaf_addresses (street-number relaxed, state)"
+    )
+    res <- .combine_path_results(res, st_res, max_results)
+    if (include_custom && .table_has_rows(con, "custom_addresses")) {
+      st_custom <- .run_duckdb_score_query(
+        con, "__gnafr_snr_st__", "custom_addresses",
+        join_on, pre_filter, weights, max_results, min_score, verbose,
+        label = "custom_addresses (street-number relaxed, state)"
+      )
+      res <- .combine_path_results(res, st_custom, max_results)
+    }
+  }
+
   res
 }
 

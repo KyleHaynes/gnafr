@@ -14,6 +14,7 @@ gnaf_match(
   alias_types = NULL,
   resolve_principal = FALSE,
   locality_fallback = TRUE,
+  street_number_fallback = TRUE,
   street_only_fallback = FALSE,
   fallback_threshold = 90L,
   weights = .default_match_weights(),
@@ -62,6 +63,12 @@ aliases with no \code{principal_pid} (e.g. \code{street_only}). Default
 \item{locality_fallback}{If \code{TRUE} (default), re-searches by locality
 name for unmatched inputs and results below \code{fallback_threshold}
 whose locality component is weak.}
+
+\item{street_number_fallback}{If \code{TRUE} (default), re-searches by
+street name (dropping the number-based candidate filter every other path
+uses) for unmatched inputs and results below \code{fallback_threshold}
+whose number component is weak - i.e. the parsed street exists, just not
+at the requested number. See Details.}
 
 \item{street_only_fallback}{If \code{TRUE}, inputs still unmatched after all
 other paths are re-matched against street-level aliases
@@ -120,7 +127,7 @@ A \code{data.table} ordered by \code{input_id} then descending
   retains unmatched inputs with missing match columns.
 }
 \description{
-Uses a four-path strategy:
+Uses a five-path strategy:
 \enumerate{
   \item \strong{Postcode path} - primary, blocks on the parsed postcode.
   \item \strong{State path} - for inputs with no parseable postcode.
@@ -128,11 +135,22 @@ Uses a four-path strategy:
         weak (score below \code{fallback_threshold}). Uses DuckDB's built-in
         \code{jaro_winkler_similarity} to find the correct postcode from the
         parsed suburb name, then re-scores. Handles wrong or missing postcodes.
+  \item \strong{Street-number-relaxed fallback} - for inputs whose best result
+        so far is weak specifically because of a poor or absent number match
+        (score below \code{fallback_threshold} with a near-zero number score,
+        or no result at all). Every path above blocks candidates on the
+        parsed number before street name is ever scored, so a real row on the
+        correct street at a *different* number is invisible to them no matter
+        how strong the rest of the match would be. This path drops the number
+        constraint and joins on street name instead, letting the correct
+        street (with an honestly low number score) compete on its merits
+        against whatever else happened to satisfy the number filter.
   \item \strong{Street-only fallback} - optional; fires for inputs that are
         still unmatched after all other paths. Matches against street-level
         aliases built by \code{gnaf_build_street_aliases}. Useful when a
         specific street number is absent from GNAF but the street itself
-        exists.
+        exists and \code{street_number_fallback} was disabled or didn't find it
+        (e.g. the street name itself needs fuzzy resolution).
 }
 }
 \details{

@@ -45,7 +45,12 @@ flowchart LR
     H -- no --> Z
     H -- yes & locality parsed --> I[Locality fallback<br/>fuzzy suburb → postcode]
 
-    I --> J{Still unmatched &<br/>street_only_fallback=TRUE?}
+    I --> H2{Best score <=<br/>fallback_threshold<br/>or unmatched?}
+    H2 -- no --> J
+    H2 -- yes --> I2[Street-number-relaxed fallback<br/>drop number filter, search by street name]
+    I2 --> J
+
+    J{Still unmatched &<br/>street_only_fallback=TRUE?}
 
     J -- no --> Z
     J -- yes --> K[Street-only fallback]
@@ -281,11 +286,13 @@ gnaf_match("15 Fairway Drive, Clear Island Waters QLD 4226", con, verbose = FALS
 ::: {.callout-warning}
 ## The number filter is a gate, not a soft score
 Unlike every other component, an unmatched street number doesn't just *score* zero —
-in most paths, candidates whose number doesn't satisfy the pre-filter (intersecting numeric intervals, or a suffixed house number
+in the postcode, state and locality-fallback paths, candidates whose number doesn't
+satisfy the pre-filter (intersecting numeric intervals, or a suffixed house number
 recovered from the candidate label) are excluded from the SQL join entirely and
-never reach scoring at all. An input with a house number that simply isn't in G-NAF
-for that street comes back `matched = FALSE`, `match_status = "no_candidate"` — not
-a low-scoring row you can raise by lowering `min_score`:
+never reach scoring at all. Disabling every fallback below shows the gate in its raw
+form: an input with a house number that simply isn't in G-NAF for that street comes
+back `matched = FALSE`, `match_status = "no_candidate"` — not a low-scoring row you
+can raise by lowering `min_score`:
 
 ```{r}
 gnaf_match("999 Musgrave Road, Red Hill QLD 4059", local({
@@ -296,13 +303,34 @@ gnaf_match("999 Musgrave Road, Red Hill QLD 4059", local({
     locality_name = "RED HILL", state = "QLD", postcode = 4059L
   ))
   c2
-}), min_score = 0, verbose = FALSE)[, .(matched, match_status, total_score)]
+}), min_score = 0, street_number_fallback = FALSE, verbose = FALSE)[, .(matched, match_status, total_score)]
 ```
 
-The one exception is the **street-only fallback** (@sec-matching-paths), which
-exists precisely for this situation — it matches against number-free street records
-so an input can still resolve to the right street when its exact number isn't (yet)
-in G-NAF.
+Two fallbacks exist precisely for this situation, on by default so it's rarely seen
+in practice: the **street-number-relaxed fallback** (@sec-matching-paths) drops the
+number constraint and re-searches by street name whenever the best result so far is
+weak, letting the correct street compete on its own (honestly number-scored) merits —
+the same input above resolves under the defaults used everywhere else in this
+document:
+
+```{r}
+gnaf_match("999 Musgrave Road, Red Hill QLD 4059", local({
+  c2 <- gnaf_connect(":memory:"); gnaf_init(c2)
+  gnaf_add(c2, data.table::data.table(
+    address_label = "10 MUSGRAVE ROAD, RED HILL QLD 4059",
+    number_first = 10L, street_name = "MUSGRAVE", street_type = "ROAD",
+    locality_name = "RED HILL", state = "QLD", postcode = 4059L
+  ))
+  c2
+}), min_score = 0, verbose = FALSE)[, .(matched, match_status, total_score, score_number, address_label)]
+```
+
+The **street-only fallback** (opt-in, `street_only_fallback = TRUE`) covers what the
+street-number-relaxed fallback can't: it fires only once every number-aware path has
+come up completely empty, and matches against pre-built number-free alias records, so
+it can additionally recover a *misspelt* street name via those records' own fuzzy
+resolution - useful when the street-number-relaxed fallback's exact street-name join
+doesn't find anything either.
 :::
 
 ### Flat / unit and level (default weight 5)
@@ -398,18 +426,59 @@ gnaf_match("77 Broadwater Road, Mt Gravatt East QLD 9999", con, min_score = 0, v
 ]
 ```
 
-### 6. Street-only fallback (opt-in: `street_only_fallback = TRUE`)
+### 6. Street-number-relaxed fallback (default: `street_number_fallback = TRUE`)
+
+Every path above blocks candidates on the parsed street number (@sec-scoring's "gate,
+not a soft score" callout) *before street name is ever scored*. So a real G-NAF row
+on the exact right street, at a number just not present in the loaded data, is
+invisible to paths 3-5 no matter how strong the rest of the match would be — the
+algorithm can only ever surface whatever *other* row happened to satisfy the number
+filter, including a coincidentally similar street name elsewhere.
+
+This path runs when the best result across paths 3-5 is still at or below
+`fallback_threshold`, or absent entirely. It drops the number constraint and joins on
+`street_name` instead (postcode-anchored when the input has one, state-anchored
+otherwise), so a real entry on the correct street becomes a scoreable candidate again
+- with an honestly low `score_number` - and the existing scoring formula decides
+whether it beats whatever else was found. Unlike street-only fallback below, the
+street-name join here is exact, not fuzzy: it targets "right street, wrong number,"
+not "misspelt street."
+
+```{r}
+local({
+  c3 <- gnaf_connect(":memory:"); gnaf_init(c3)
+  gnaf_add(c3, data.table::data.table(
+    address_detail_pid = c("WILLIAM_REAL", "HICKEY_DECOY"),
+    address_label = c("23 WILLIAM STREET, PORTSMITH QLD 4870",
+                      "61 WILLIAM HICKEY STREET, REDLYNCH QLD 4870"),
+    number_first = c(23L, 61L),
+    street_name = c("WILLIAM", "WILLIAM HICKEY"), street_type = "STREET",
+    locality_name = c("PORTSMITH", "REDLYNCH"), state = "QLD", postcode = 4870L
+  ))
+  # 61 William Street doesn't exist in this data - only 23 does. Without this
+  # fallback, the number gate would instead surface "61 William Hickey
+  # Street" (a different street/suburb that merely shares one word and has a
+  # coincidentally matching number).
+  out <- gnaf_match("61 William Street, Portsmith QLD 4870", c3, verbose = FALSE)[
+    , .(address_detail_pid, total_score, score_number, score_street_name, address_label)
+  ]
+  gnaf_disconnect(c3)
+  out
+})
+```
+
+### 7. Street-only fallback (opt-in: `street_only_fallback = TRUE`)
 
 For inputs still unmatched after every other path. Matches only against
 `alias_type = 'street_only'` rows — synthetic, number-free address records derived
 from G-NAF by [`gnaf_build_street_aliases()`](05-function-reference.qmd#gnaf_build_street_aliases)
 (or the official PSV alias tables via
-[`gnaf_load_psv()`](05-function-reference.qmd#gnaf_load_psv)). Numbered inputs never
-match these rows through the ordinary paths above — the number pre-filter requires a matching number or overlapping range, and
-street-only rows have no number — so this path exists specifically to give those
-inputs *something* once everything number-aware has failed. Typical cause: a brand
-new subdivision whose house numbers G-NAF hasn't published yet, or an input that
-genuinely has no street number.
+[`gnaf_load_psv()`](05-function-reference.qmd#gnaf_load_psv)). Its join filters only
+on postcode and `alias_type`, so street name is scored (fuzzily, same as every
+number-aware path) rather than filtered — meaning it can additionally recover a
+*misspelt* street name that the street-number-relaxed fallback's exact join would
+miss. Typical cause: a brand new subdivision whose house numbers G-NAF hasn't
+published yet, or an input that genuinely has no street number.
 
 ```{r}
 gnaf_disconnect(con)
