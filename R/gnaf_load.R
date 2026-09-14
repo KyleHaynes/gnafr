@@ -25,9 +25,14 @@ gnaf_load <- function(con, path, overwrite = FALSE) {
   if (length(missing) > 0L)
     stop("File(s) not found:\n  ", paste(missing, collapse = "\n  "))
 
+  restore_order <- .disable_insertion_order(con)
+
   DBI::dbBegin(con)
   committed <- FALSE
   on.exit(if (!committed) DBI::dbRollback(con), add = TRUE)
+  # Registered after the rollback handler so the SET runs outside the
+  # transaction on the error path.
+  on.exit(restore_order(), add = TRUE)
 
   if (overwrite) {
     DBI::dbExecute(con, "DELETE FROM gnaf_addresses WHERE source = 'gnaf'")

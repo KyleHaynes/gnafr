@@ -2,22 +2,69 @@
 #'
 #' @param path Path to the DuckDB file. Pass ":memory:" for an in-memory DB.
 #' @param read_only Open in read-only mode.
+#' @param memory_limit Optional DuckDB memory cap, e.g. \code{"8GB"} or
+#'   \code{"75\%"}. DuckDB's default is 80\% of \emph{physical} RAM, which on a
+#'   machine where other software (corporate endpoint agents, antivirus,
+#'   browsers) already holds a lot of memory can exceed what is actually
+#'   available and crash the whole R session mid-load instead of raising an R
+#'   error. If \code{gnaf_load()}/\code{gnaf_load_psv()} terminates R
+#'   unexpectedly, set this well below the machine's free RAM (e.g.
+#'   \code{"4GB"}) — DuckDB then spills to disk instead of over-allocating.
+#' @param threads Optional number of DuckDB worker threads. Defaults to every
+#'   logical core, and each concurrent pipeline holds its own buffers, so
+#'   many-core machines have a substantially higher peak memory footprint for
+#'   the same load. Lowering this (e.g. \code{4}) is the other half of taming
+#'   memory spikes during bulk loads.
+#' @param temp_directory Optional directory DuckDB uses to spill data that
+#'   exceeds \code{memory_limit}. For file-backed databases DuckDB defaults to
+#'   \file{<path>.tmp} next to the database file; set this explicitly if that
+#'   drive is small, quota-limited, or synced/scanned (OneDrive, DFS,
+#'   aggressive antivirus).
 #' @details DuckDB shares file-backed database instances within an R session.
 #'   A connection cannot change the mode of an existing instance. Close its
 #'   connections and release the instance with [gnaf_disconnect()] before
 #'   reopening it in a different mode.
+#'
+#'   The resource settings are applied with \code{SET} on the returned
+#'   connection, so they take effect even when an existing shared database
+#'   instance is reused.
 #' @return A DBI connection object.
 #' @export
-gnaf_connect <- function(path, read_only = FALSE) {
+gnaf_connect <- function(path, read_only = FALSE, memory_limit = NULL,
+                         threads = NULL, temp_directory = NULL) {
   if (!is.logical(read_only) || length(read_only) != 1L || is.na(read_only))
     stop("'read_only' must be TRUE or FALSE", call. = FALSE)
+  if (!is.null(memory_limit) &&
+      (!is.character(memory_limit) || length(memory_limit) != 1L ||
+       is.na(memory_limit) || !nzchar(memory_limit)))
+    stop("'memory_limit' must be a single string like \"8GB\"", call. = FALSE)
+  if (!is.null(threads)) threads <- .as_positive_integer(threads, "threads")
+  if (!is.null(temp_directory) &&
+      (!is.character(temp_directory) || length(temp_directory) != 1L ||
+       is.na(temp_directory) || !nzchar(temp_directory)))
+    stop("'temp_directory' must be a single directory path", call. = FALSE)
+
   drv <- duckdb::duckdb(dbdir = path, read_only = read_only)
   if (!identical(drv@read_only, read_only))
     stop("Database is already open in ",
          if (drv@read_only) "read-only" else "read-write", " mode: ", path,
          ". Close its connections and call gnaf_disconnect(con, shutdown = TRUE) ",
          "to release the instance before changing modes.", call. = FALSE)
-  DBI::dbConnect(drv)
+  con <- DBI::dbConnect(drv)
+
+  if (!is.null(memory_limit))
+    DBI::dbExecute(con, sprintf(
+      "SET memory_limit = '%s'", gsub("'", "''", memory_limit)
+    ))
+  if (!is.null(threads))
+    DBI::dbExecute(con, sprintf("SET threads = %d", threads))
+  if (!is.null(temp_directory))
+    DBI::dbExecute(con, sprintf(
+      "SET temp_directory = '%s'",
+      gsub("'", "''", gsub("\\\\", "/", temp_directory))
+    ))
+
+  con
 }
 
 #' Disconnect from a gnafr database
@@ -224,6 +271,9 @@ gnaf_rebuild_locality_index <- function(con) {
 #' @return Invisibly, the number of street-only aliases now in the database.
 #' @export
 gnaf_build_street_aliases <- function(con, overwrite = FALSE) {
+  restore_order <- .disable_insertion_order(con)
+  on.exit(restore_order(), add = TRUE)
+
   if (isTRUE(overwrite)) {
     DBI::dbExecute(con,
       "DELETE FROM gnaf_addresses WHERE alias_type = 'street_only'"

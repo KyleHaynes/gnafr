@@ -18,6 +18,44 @@ test_that("connections reject a cached mode mismatch and allow explicit reopenin
   expect_false(DBI::dbExistsTable(writer, "demo"))
 })
 
+test_that("gnaf_connect applies and validates resource settings", {
+  spill <- tempfile("duckdb_spill")
+  con <- gnaf_connect(":memory:", memory_limit = "1GB", threads = 2,
+                      temp_directory = spill)
+  on.exit(gnaf_disconnect(con), add = TRUE)
+  expect_equal(
+    as.integer(DBI::dbGetQuery(con, "SELECT current_setting('threads') AS v")$v),
+    2L
+  )
+  # memory_limit is reported back in DuckDB's own units; just confirm it took
+  # a bounded value rather than the default.
+  expect_match(
+    DBI::dbGetQuery(con, "SELECT current_setting('memory_limit') AS v")$v,
+    "[0-9]"
+  )
+  expect_equal(
+    DBI::dbGetQuery(con, "SELECT current_setting('temp_directory') AS v")$v,
+    gsub("\\\\", "/", spill)
+  )
+
+  expect_error(gnaf_connect(":memory:", memory_limit = 8), "'memory_limit'")
+  expect_error(gnaf_connect(":memory:", threads = 0), "'threads'")
+  expect_error(gnaf_connect(":memory:", temp_directory = NA), "'temp_directory'")
+})
+
+test_that(".disable_insertion_order turns ordering off and restores it", {
+  con <- gnaf_connect(":memory:")
+  on.exit(gnaf_disconnect(con), add = TRUE)
+  setting <- function() as.logical(DBI::dbGetQuery(
+    con, "SELECT current_setting('preserve_insertion_order') AS v"
+  )$v)
+  expect_true(setting())
+  restore <- gnafr:::.disable_insertion_order(con)
+  expect_false(setting())
+  restore()
+  expect_true(setting())
+})
+
 test_that("shutdown releases overwritten legacy connections after a failed DROP", {
   path <- tempfile(fileext = ".duckdb")
   on.exit(unlink(path), add = TRUE)

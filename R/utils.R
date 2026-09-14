@@ -39,6 +39,34 @@
   paste0("\\b(", paste(abbrevs, collapse = "|"), ")\\b")
 }
 
+# Disable DuckDB's preserve_insertion_order for the duration of a bulk load.
+# With it on (the default), a large INSERT ... SELECT FROM read_csv(...) must
+# buffer entire ordered result batches in memory before writing, which is a
+# major driver of out-of-memory aborts on big loads — and a DuckDB OOM takes
+# the whole R process down rather than raising a catchable error. Row order in
+# gnaf_addresses is irrelevant, so switch it off and hand back a restorer for
+# the caller's on.exit(). Must be called outside a transaction.
+.disable_insertion_order <- function(con) {
+  old <- tryCatch(
+    DBI::dbGetQuery(
+      con, "SELECT current_setting('preserve_insertion_order') AS v"
+    )$v,
+    error = function(e) NULL
+  )
+  set_ok <- tryCatch({
+    DBI::dbExecute(con, "SET preserve_insertion_order = false")
+    TRUE
+  }, error = function(e) FALSE)
+  if (!set_ok || is.null(old)) return(function() invisible(NULL))
+  function() {
+    try(DBI::dbExecute(con, sprintf(
+      "SET preserve_insertion_order = %s",
+      if (isTRUE(as.logical(old))) "true" else "false"
+    )), silent = TRUE)
+    invisible(NULL)
+  }
+}
+
 # Fallback operator used across the package. Deliberately broader than the
 # usual null-coalesce: length-0 vectors and empty strings also fall through.
 `%||%` <- function(x, y) {
