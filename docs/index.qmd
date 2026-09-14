@@ -31,7 +31,7 @@ understand exactly what's happening or who need to debug an unexpected result.
   formula, and the multi-path matching strategy, explained from the actual
   implementation rather than from the outside.
 - [Building a good lookup table](04-build-database.qmd) — a guided walkthrough of
-  [`build_gnaf_database.R`](../build_gnaf_database.R), the reference pipeline for
+  [`build_gnaf_database.R`](../dev/build_gnaf_database.R), the reference pipeline for
   turning a raw G-NAF download into a database that matches well.
 
 **Reference**

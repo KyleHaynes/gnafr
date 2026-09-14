@@ -1,6 +1,6 @@
 # Building a good lookup table
 
-This chapter walks through [`build_gnaf_database.R`](../build_gnaf_database.R), the
+This chapter walks through [`build_gnaf_database.R`](../dev/build_gnaf_database.R), the
 reference build pipeline shipped in the package repository. Every step below is
 something gnafr actually does (or can do) to turn a raw G-NAF download into a
 database that [`gnaf_match()`](05-function-reference.qmd#gnaf_match) matches well

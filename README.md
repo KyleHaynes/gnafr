@@ -104,7 +104,7 @@ Key arguments:
 | `geographies` | `NULL` | Append saved geography attributes by registered name, or use `TRUE` for all available layers. |
 | `weights` | defaults | Named list of score weights summing to 100. |
 
-Matching details and review findings are in [MATCHING_REVIEW.md](MATCHING_REVIEW.md).
+Matching details and review findings are in [MATCHING_REVIEW.md](reports/MATCHING_REVIEW.md).
 Scores measure component agreement, rather than a probability of correctness.
 Use `max_results > 1` to inspect alternatives. Principal/primary options follow
 stored PID relationships after ranking and preserve the original address in
@@ -123,7 +123,7 @@ results <- gnaf_match(addresses, con, geographies = "sa2_2021")
 
 Use `gnaf_add_geography()` to calculate a new layer from polygons, or
 `gnaf_join_geographies()` to enrich existing results. `gnaf_remove_geography()`
-removes a layer and its registration. See [example_usage.MD](example_usage.MD)
+removes a layer and its registration. See [example_usage.MD](reports/example_usage.MD)
 for the complete SA2 add, match, coverage and removal demo.
 
 ### Shiny geocoder
