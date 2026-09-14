@@ -1,0 +1,13 @@
+%% Source for the inlined SVG in gnafr-overview.qmd (search "Match result<br>+ chosen columns").
+%% Regenerating needs mermaid-cli/Chromium; paste the result back inline,
+%% not as a linked <img>/<object> — see custom.scss's .diagram rule comment.
+%%{init: {'flowchart': {'htmlLabels': false}}}%%
+flowchart LR
+  A[("Address coordinates")] --> B["Distinct coordinate pairs"]
+  P["Any polygon layer<br/>+ attributes"] --> C["sf point-in-polygon<br/>lookup in R"]
+  B --> C
+  C --> D[("Saved PID → geography table<br/>inside DuckDB")]
+  M["Final returned address PID"] --> J["Join saved attributes"]
+  D --> J --> R["Match result<br/>+ chosen columns"]
+  style C fill:#e3f2ef,stroke:#21705b
+  style D fill:#e9f2fa,stroke:#236188

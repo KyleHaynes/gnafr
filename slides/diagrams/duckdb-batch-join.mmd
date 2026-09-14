@@ -1,0 +1,14 @@
+%% Source for the inlined SVG in gnafr-overview.qmd (search "Register parsed rows").
+%% Regenerating needs mermaid-cli/Chromium; paste the result back inline,
+%% not as a linked <img>/<object> — see custom.scss's .diagram rule comment.
+%%{init: {'flowchart': {'htmlLabels': false}}}%%
+flowchart LR
+  P["G-NAF PSV files"] -->|read and join in SQL| D[("Reference tables")]
+  R["R: parse the input batch"] --> I["Register parsed rows"]
+  subgraph SQL["DuckDB: work on the batch"]
+    I --> C["Find candidates"] --> S["Score components"] --> K["Rank per input"]
+    D --> C
+  end
+  K --> O["R: data.table of results"]
+  style SQL fill:#f0f6fa,stroke:#236188
+  style O fill:#e3f2ef,stroke:#21705b,stroke-width:2px

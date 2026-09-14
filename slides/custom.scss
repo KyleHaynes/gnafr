@@ -69,20 +69,23 @@ $presentation-heading-font-weight: 600 !default;
 
 .dim { color: #6a7686; }
 
-/* Quarto's mermaid-init.js swaps <pre class="mermaid-js"> for <svg class="mermaid-js">
-   at load, so the cap must target the svg. Slide-box px, not vh: reveal scales
-   the whole 1360x800 box, so 480px is always 60% of the slide. preserveAspectRatio
-   defaults to "meet", so this letterboxes rather than distorts. */
-.reveal svg.mermaid-js {
+/* Diagrams are pre-rendered mermaid SVGs (source in diagrams/*.mmd) inlined
+   as raw <svg> markup in the qmd, not live {mermaid} chunks — rendering
+   those needs mermaid-cli, which needs a headless Chromium, unavailable on
+   some build machines. Inlining (rather than a linked <img>/<object>)
+   matters too: mermaid's html-label nodes use <foreignObject>, which
+   browsers only render when the SVG is parsed as part of the page's own
+   HTML, not loaded as a standalone document. Override reveal's default
+   section-img border/background and cap height in slide-box px, not vh:
+   reveal scales the whole 1360x800 box, so 480px is always 60% of it. */
+.reveal section .diagram {
+  border: none;
+  background: transparent;
+  box-shadow: none;
   max-height: 480px;
   max-width: 100%;
   display: block;
   margin: 0 auto;
-}
-
-.reveal svg[id^="mermaid-figure-"] {
-  max-width: 100%;
-  max-height: 480px;
 }
 
 /* Narrative components used throughout the overview deck. */

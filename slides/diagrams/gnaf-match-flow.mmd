@@ -1,0 +1,28 @@
+%% Source for the inlined SVG in gnafr-overview.qmd (search "Scored<br>data.table").
+%% Regenerating needs mermaid-cli/Chromium; paste the result back inline,
+%% not as a linked <img>/<object> — see custom.scss's .diagram rule comment.
+%%{init: {'themeVariables': {'fontSize': '20px'}, 'flowchart': {'htmlLabels': false, 'curve': 'basis', 'rankSpacing': 25, 'nodeSpacing': 25}}}%%
+flowchart TB
+  subgraph PREP["Prepare + retrieve"]
+    direction LR
+    A["Address<br/>vector"] --> B["1 · Parse<br/>standardise"]
+    B --> C["2 · Look up /<br/>retrieve candidates"]
+    D[("DuckDB<br/>reference rows")] --> C
+  end
+  subgraph MATCH["Score + return"]
+    direction LR
+    E["3 · Score<br/>six components"] --> F["4 · Rank<br/>candidates"]
+    E -.->|weak or unmatched| G["Broaden search<br/>locality / number<br/>optional street-only"]
+    G -.->|re-score| E
+    F --> H["5 · Resolve links<br/>join geographies"]
+    H --> I["Scored<br/>data.table"]
+  end
+  PREP --> MATCH
+  style PREP fill:#f4f8fb,stroke:#b4cbdc
+  style MATCH fill:#f4f9f7,stroke:#b9d7cc
+  style B fill:#e9f2fa,stroke:#236188
+  style C fill:#e9f2fa,stroke:#236188
+  style E fill:#e3f2ef,stroke:#21705b
+  style F fill:#e3f2ef,stroke:#21705b
+  style G fill:#fff1db,stroke:#b77526
+  style I fill:#12405c,color:#fff,stroke:#12405c

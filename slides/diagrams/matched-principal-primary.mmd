@@ -1,0 +1,10 @@
+%% Source for the inlined SVG in gnafr-overview.qmd (search "27 IVO STREET").
+%% Regenerating needs mermaid-cli/Chromium; paste the result back inline,
+%% not as a linked <img>/<object> — see custom.scss's .diagram rule comment.
+%%{init: {'flowchart': {'htmlLabels': false}}}%%
+flowchart LR
+  A["Matched alias<br/>27 IVO STREET<br/>NUNDAH QLD 4012"] -->|principal_pid| B["Principal address<br/>(linked record)"]
+  B -->|primary_pid| C["Primary address<br/>(parent site)"]
+  style A fill:#fff1db,stroke:#b77526
+  style B fill:#e3f2ef,stroke:#21705b
+  style C fill:#e9f2fa,stroke:#236188

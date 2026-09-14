@@ -1,0 +1,10 @@
+%% Source for the inlined SVG in gnafr-overview.qmd (search "DuckDB engine").
+%% Regenerating needs mermaid-cli/Chromium; paste the result back inline,
+%% not as a linked <img>/<object> — see custom.scss's .diagram rule comment.
+%%{init: {'flowchart': {'htmlLabels': false}}}%%
+flowchart TB
+  R["R session"] --> D["DuckDB engine"]
+  D <--> F[("gnafr.duckdb")]
+  D --> T["Selected results in R"]
+  style D fill:#e3f2ef,stroke:#21705b,stroke-width:2px
+  style F fill:#e9f2fa,stroke:#236188,stroke-width:2px
