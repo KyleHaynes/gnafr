@@ -13,8 +13,55 @@
 .SCORE_DIRECTIONS <- c(N = "NORTH", NTH = "NORTH", S = "SOUTH", STH = "SOUTH",
                        E = "EAST", W = "WEST", NE = "NORTH EAST", NW = "NORTH WEST",
                        SE = "SOUTH EAST", SW = "SOUTH WEST")
-.SCORE_FLAT_TYPES <- c(APARTMENT = "UNIT", FLAT = "UNIT")
-.SCORE_LEVEL_TYPES <- c(FLOOR = "LEVEL")
+
+# Both sides pass through this map before comparison: user input arrives
+# already canonicalised by address_parse() via inst/extdata/flat_types.csv
+# (full English words), while a real GNAF candidate row stores its official
+# short FLAT_TYPE_CODE verbatim from the source PSV - confirmed against a
+# real load: APT, HSE, STU, BLDG, WHSE, CTGE, TNHS, DUPL, FCTY, KSK, PTHS,
+# MSNT, VLLA, OFFC and SE all appear, alongside UNIT/SHOP/SITE/ROOM/SHED/
+# REAR/WARD/FLAT which already match their canonical word directly. Without
+# mapping GNAF's own codes here too, a perfectly correct match (input
+# "Apartment 210" vs a real GNAF row coded "APT 210") scored as a *type
+# conflict* - halving the identifier's credit - purely because "APARTMENT"
+# != "APT" as strings, even though they mean the same thing.
+#
+# Reuses .get_flat_type_map() (the same abbreviation table address_parse()
+# itself uses) so the two vocabularies can't drift apart again, with one
+# addition: APARTMENT/FLAT/UNIT are deliberately merged into a single "UNIT"
+# bucket, since these three are used near-interchangeably for residential
+# sub-addresses in Australian English - every other category keeps its own
+# distinct target, so e.g. a "Warehouse" input still correctly conflicts
+# with a real "Shop".
+.get_score_flat_type_map <- function() {
+  if (is.null(.gnafr_env$score_flat_type_map)) {
+    m <- .get_flat_type_map()
+    m[m %in% c("APARTMENT", "FLAT", "UNIT")] <- "UNIT"
+    .gnafr_env$score_flat_type_map <- m
+  }
+  .gnafr_env$score_flat_type_map
+}
+
+# Same idea for level/floor identifiers, reused from .get_level_type_map()
+# the same way, with LEVEL/FLOOR merged into one bucket (an existing,
+# deliberate choice: the two words describe the same physical concept).
+# GNAF's own LEVEL_TYPE_CODE for this is overwhelmingly "L" in a real load
+# (by far the single most common value), plus "FL" and "LG".
+#
+# "B" (basement) is added only here, not to level_types.csv's parsing
+# vocabulary - a bare "B" is too easy to collide with real address text when
+# *parsing* free-form input (e.g. "Tower B 25 Smith Street"), but GNAF's own
+# level_type column is already a trusted, structured value rather than free
+# text, so there's no such risk in this comparison.
+.get_score_level_type_map <- function() {
+  if (is.null(.gnafr_env$score_level_type_map)) {
+    m <- .get_level_type_map()
+    m[m %in% c("LEVEL", "FLOOR")] <- "LEVEL"
+    m["B"] <- "BASEMENT"
+    .gnafr_env$score_level_type_map <- m
+  }
+  .gnafr_env$score_level_type_map
+}
 
 .score_mapped_value <- function(x, map) {
   x <- .score_value(x)
@@ -180,11 +227,11 @@
   i_level <- value("in_level_number")
   g_level <- value("level_number")
   flat <- .score_identifier(i_flat, g_flat,
-    .score_mapped_value(value("in_flat_type"), .SCORE_FLAT_TYPES),
-    .score_mapped_value(value("flat_type"), .SCORE_FLAT_TYPES))
+    .score_mapped_value(value("in_flat_type"), .get_score_flat_type_map()),
+    .score_mapped_value(value("flat_type"), .get_score_flat_type_map()))
   level <- .score_identifier(i_level, g_level,
-    .score_mapped_value(value("in_level_type"), .SCORE_LEVEL_TYPES),
-    .score_mapped_value(value("level_type"), .SCORE_LEVEL_TYPES))
+    .score_mapped_value(value("in_level_type"), .get_score_level_type_map()),
+    .score_mapped_value(value("level_type"), .get_score_level_type_map()))
   flat_present <- i_flat != "" | g_flat != ""
   level_present <- i_level != "" | g_level != ""
   # Divide the existing flat weight only when both dimensions carry evidence.
@@ -211,9 +258,9 @@
   }
   mapped <- function(alias, name, map) .score_mapped_value_sql(paste0(alias, ".", name), map)
   flat <- identifier(i_flat, g_flat,
-    mapped(i, "in_flat_type", .SCORE_FLAT_TYPES), mapped(g, "flat_type", .SCORE_FLAT_TYPES))
+    mapped(i, "in_flat_type", .get_score_flat_type_map()), mapped(g, "flat_type", .get_score_flat_type_map()))
   level <- identifier(i_level, g_level,
-    mapped(i, "in_level_type", .SCORE_LEVEL_TYPES), mapped(g, "level_type", .SCORE_LEVEL_TYPES))
+    mapped(i, "in_level_type", .get_score_level_type_map()), mapped(g, "level_type", .get_score_level_type_map()))
   flat_present <- sprintf("(%s != '' OR %s != '')", i_flat, g_flat)
   level_present <- sprintf("(%s != '' OR %s != '')", i_level, g_level)
   sprintf(paste0(

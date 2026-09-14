@@ -177,6 +177,74 @@ test_that("flat and level identifiers retain independent evidence", {
   expect_equal(gnafr:::.score_pairs(missing)$score_flat, 4L)
 })
 
+test_that("GNAF's own flat/level type codes score as full agreement, not a type conflict", {
+  # Reported bug, reproduced directly: address_parse() canonicalises user
+  # input to the full English word ("APARTMENT"), but a real GNAF candidate
+  # row stores its official short FLAT_TYPE_CODE verbatim ("APT") - these
+  # used to be treated as a genuine type conflict (50% credit) purely
+  # because the strings differ, even though they mean the same thing. This
+  # let a building's bare primary record (no flat info at all) tie with the
+  # one genuinely-correct unit among dozens of candidates sharing the same
+  # street number, with the tie broken by arbitrary PID order.
+  cases <- list(
+    c(input = "APARTMENT", candidate = "APT"),   # the reported case
+    c(input = "HOUSE",     candidate = "HSE"),
+    c(input = "STUDIO",    candidate = "STU"),
+    c(input = "BUILDING",  candidate = "BLDG"),
+    c(input = "WAREHOUSE", candidate = "WHSE"),
+    c(input = "TOWNHOUSE", candidate = "TNHS"),
+    c(input = "DUPLEX",    candidate = "DUPL"),
+    c(input = "VILLA",     candidate = "VLLA"),
+    c(input = "OFFICE",    candidate = "OFFC"),
+    c(input = "SUITE",     candidate = "SE")
+  )
+  for (case in cases) {
+    p <- make_pair("ROAD", "ROAD",
+                   in_flat_number = "5", flat_number = "5",
+                   in_flat_type = case[["input"]], flat_type = case[["candidate"]])
+    expect_equal(gnafr:::.score_pairs(p)$score_flat, 5L, info = case[["candidate"]])
+  }
+
+  # Genuinely different categories must still conflict - the fix must not
+  # accidentally widen the net beyond true synonyms.
+  wrong <- make_pair("ROAD", "ROAD",
+                     in_flat_number = "5", flat_number = "5",
+                     in_flat_type = "WAREHOUSE", flat_type = "SHOP")
+  expect_equal(gnafr:::.score_pairs(wrong)$score_flat, 2L)
+})
+
+test_that("GNAF's own level type codes (especially 'L') score as full agreement", {
+  # "L" is GNAF's overwhelmingly dominant level_type code in practice - this
+  # is the same class of bug as the flat-type one above, just for levels.
+  for (candidate_code in c("L", "FL", "LG", "B")) {
+    input_word <- c(L = "LEVEL", FL = "FLOOR", LG = "LOWER GROUND FLOOR", B = "BASEMENT")[[candidate_code]]
+    p <- make_pair("ROAD", "ROAD",
+                   in_level_number = "3", level_number = "3",
+                   in_level_type = input_word, level_type = candidate_code)
+    expect_equal(gnafr:::.score_pairs(p)$score_flat, 5L, info = candidate_code)
+  }
+})
+
+test_that("flat/level type synonym maps agree between R and DuckDB", {
+  pairs <- rbindlist(list(
+    make_pair("ROAD", "ROAD", in_flat_number = "5", flat_number = "5",
+              in_flat_type = "APARTMENT", flat_type = "APT"),
+    make_pair("ROAD", "ROAD", in_flat_number = "5", flat_number = "5",
+              in_flat_type = "WAREHOUSE", flat_type = "SHOP"),
+    make_pair("ROAD", "ROAD", in_level_number = "3", level_number = "3",
+              in_level_type = "LEVEL", level_type = "L")
+  ))
+  r_scored <- gnafr:::.score_pairs(copy(pairs))
+  con <- gnaf_connect(":memory:")
+  on.exit(gnaf_disconnect(con), add = TRUE)
+  duckdb::duckdb_register(con, "flat_type_pairs", pairs)
+  on.exit(duckdb::duckdb_unregister(con, "flat_type_pairs"), add = TRUE)
+  expressions <- gnafr:::.score_sql_exprs(gnafr:::.default_match_weights(), i = "p", g = "p")
+  sql <- paste(sprintf("%s AS %s", expressions, names(expressions)), collapse = ", ")
+  sql_scored <- as.data.table(DBI::dbGetQuery(con, paste("SELECT", sql, "FROM flat_type_pairs p")))
+  expect_equal(sql_scored$score_flat, r_scored$score_flat)
+})
+
 test_that("explicit lot number replaces street number scoring", {
   p <- make_pair(
     "ROAD", "ROAD", in_number_first = 99L, number_first = 10L,

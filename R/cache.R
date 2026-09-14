@@ -14,7 +14,11 @@
 # v10: added the street-number-relaxed fallback path (drops the number
 # candidate filter when the parsed street exists but not at that number) -
 # previously-cached wrong-street matches for these inputs are stale.
-.CACHE_ALGORITHM_VERSION <- 10L
+# v11: flat/level type scoring now recognises GNAF's own short FLAT_TYPE_CODE/
+# LEVEL_TYPE_CODE values (APT, HSE, L, FL, ...) as synonyms for the full
+# English words address_parse() produces, instead of treating them as a type
+# conflict - previously-cached scores for any unit/level address are stale.
+.CACHE_ALGORITHM_VERSION <- 11L
 
 #' Show the current state of the match cache
 #'
