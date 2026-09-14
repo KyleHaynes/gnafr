@@ -279,6 +279,50 @@ Times assume a laptop with SSD and ~3M GNAF records for QLD. Results vary with C
 
 Re-using a single connection across multiple `gnaf_match` calls is faster than reconnecting each time. For Shiny apps or API services, keep `con` in a global or module-level variable.
 
+### If `gnaf_load()` / `gnaf_load_psv()` crashes the R session
+
+A hard crash of R (RStudio's "R Session Aborted" bomb, not an R error) during a
+bulk load is almost always DuckDB running out of memory — a DuckDB
+out-of-memory abort takes the whole R process down rather than raising a
+catchable error. Two DuckDB defaults make this machine-dependent:
+
+- **`memory_limit`** defaults to 80% of *physical* RAM. On a locked-down work
+  machine, endpoint security agents, mandated antivirus, and other corporate
+  software can already hold enough memory that 80% of physical RAM simply
+  isn't available — DuckDB over-allocates and the OS kills the process. More
+  installed RAM does not help if less of it is free.
+- **`threads`** defaults to every logical core. Each parallel pipeline holds
+  its own buffers, so a many-core work machine has a much higher peak memory
+  footprint for the *same* load than a smaller home machine.
+
+Fix: cap both at connect time and give DuckDB somewhere to spill:
+
+```r
+con <- gnaf_connect(
+  "C:/temp/gnaf.duckdb",
+  memory_limit   = "4GB",      # well under the machine's *free* RAM
+  threads        = 4,
+  temp_directory = "C:/temp/duckdb_spill"  # local, unsynced, unscanned disk
+)
+```
+
+The loaders also disable DuckDB's `preserve_insertion_order` for the duration
+of the load, which removes the largest single memory spike of
+`INSERT ... SELECT FROM read_csv(...)`.
+
+Other things worth ruling out on a machine that crashes:
+
+- **Stale crash artifacts** — after a crash, delete any leftover
+  `gnaf.duckdb.wal` / `gnaf.duckdb.tmp` next to the database (or start from a
+  fresh database file). Replaying a large WAL on the next open can itself
+  re-trigger the crash.
+- **Antivirus / sync tooling** — ensure the database, its `.wal`, and the temp
+  directory are on a local disk excluded from real-time scanning and not under
+  OneDrive/DFS folder redirection.
+- **Package version skew** — compare `packageVersion("duckdb")` (and R itself)
+  between the working and crashing machines; upgrade the crashing machine to
+  match. Several older duckdb builds had Windows-specific OOM/crash bugs.
+
 ---
 
 ## Function reference

@@ -100,9 +100,14 @@ gnaf_load_psv <- function(con, gnaf_dir, state = "QLD", overwrite = FALSE,
     stop("Missing G-NAF files for state '", state, "' in '", gnaf_dir, "':\n  ",
          paste(missing, collapse = "\n  "))
 
+  restore_order <- .disable_insertion_order(con)
+
   DBI::dbBegin(con)
   committed <- FALSE
   on.exit(if (!committed) DBI::dbRollback(con), add = TRUE)
+  # Registered after the rollback handler so the SET runs outside the
+  # transaction on the error path.
+  on.exit(restore_order(), add = TRUE)
 
   # Ensure alias_type column exists for databases created before this feature
   for (tbl in c("gnaf_addresses", "custom_addresses")) {

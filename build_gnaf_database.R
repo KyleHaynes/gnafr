@@ -19,6 +19,18 @@ library(gnafr)
 
 con <- gnaf_connect("C:/temp/gnaf.duckdb")
 
+# On machines where the load has crashed the R session (DuckDB out-of-memory
+# aborts kill R outright — common on locked-down work PCs where endpoint
+# software eats into DuckDB's default 80%-of-RAM budget, and many-core CPUs
+# raise the peak footprint further), connect with explicit caps instead:
+#
+#   con <- gnaf_connect("C:/temp/gnaf.duckdb",
+#                       memory_limit   = "4GB",   # well under *free* RAM
+#                       threads        = 4,
+#                       temp_directory = "C:/temp/duckdb_spill")
+#
+# See "If gnaf_load() / gnaf_load_psv() crashes the R session" in README.md.
+
 # -----------------------------------------------------------------------------
 # Step 0: Schema
 #

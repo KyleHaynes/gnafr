@@ -4,12 +4,39 @@
 \alias{gnaf_connect}
 \title{Connect to a gnafr DuckDB database}
 \usage{
-gnaf_connect(path, read_only = FALSE)
+gnaf_connect(
+  path,
+  read_only = FALSE,
+  memory_limit = NULL,
+  threads = NULL,
+  temp_directory = NULL
+)
 }
 \arguments{
 \item{path}{Path to the DuckDB file. Pass ":memory:" for an in-memory DB.}
 
 \item{read_only}{Open in read-only mode.}
+
+\item{memory_limit}{Optional DuckDB memory cap, e.g. \code{"8GB"} or
+\code{"75\%"}. DuckDB's default is 80\% of \emph{physical} RAM, which on a
+machine where other software (corporate endpoint agents, antivirus,
+browsers) already holds a lot of memory can exceed what is actually
+available and crash the whole R session mid-load instead of raising an R
+error. If \code{gnaf_load()}/\code{gnaf_load_psv()} terminates R
+unexpectedly, set this well below the machine's free RAM (e.g.
+\code{"4GB"}) — DuckDB then spills to disk instead of over-allocating.}
+
+\item{threads}{Optional number of DuckDB worker threads. Defaults to every
+logical core, and each concurrent pipeline holds its own buffers, so
+many-core machines have a substantially higher peak memory footprint for
+the same load. Lowering this (e.g. \code{4}) is the other half of taming
+memory spikes during bulk loads.}
+
+\item{temp_directory}{Optional directory DuckDB uses to spill data that
+exceeds \code{memory_limit}. For file-backed databases DuckDB defaults to
+\file{<path>.tmp} next to the database file; set this explicitly if that
+drive is small, quota-limited, or synced/scanned (OneDrive, DFS,
+aggressive antivirus).}
 }
 \value{
 A DBI connection object.
@@ -22,4 +49,8 @@ DuckDB shares file-backed database instances within an R session.
   A connection cannot change the mode of an existing instance. Close its
   connections and release the instance with [gnaf_disconnect()] before
   reopening it in a different mode.
+
+  The resource settings are applied with \code{SET} on the returned
+  connection, so they take effect even when an existing shared database
+  instance is reused.
 }
