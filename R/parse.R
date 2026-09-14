@@ -661,8 +661,21 @@ address_parse <- function(addresses, normalize = TRUE) {
     # flat-prefix marker, not a building name — see .ATT_FLAT_MAP.
     is_att <- grepl("^[A-Z]$", bld)
     mapped <- unname(.ATT_FLAT_MAP[bld])
-    in_flat_type[idx]     <- fifelse(is_att, fifelse(is.na(mapped), "UNIT", mapped), "UNIT")
-    in_building_name[idx] <- fifelse(!is_att & nzchar(bld), bld, NA_character_)
+    # A full flat-type word before the slash (e.g. "UNIT 20/110", "FLAT
+    # 3/12") is the flat-type marker too, not a building name — without this
+    # it was stored as building_name *and* in_flat_type defaulted to the
+    # literal "UNIT", duplicating the word (or mislabelling "FLAT ...") in
+    # the standardised address. Mirrors .parse_implied_pairs's marker check.
+    ft_split   <- stringi::stri_match_first_regex(bld, paste0("^(.*?)\\b(", ft_alt, ")$"))
+    is_ft      <- !is_att & !is.na(ft_split[, 1L])
+    ft_prefix  <- trimws(ft_split[, 2L])
+    ft_keyword <- unname(ft_map[ft_split[, 3L]])
+    in_flat_type[idx]     <- fifelse(is_att, fifelse(is.na(mapped), "UNIT", mapped),
+                                     fifelse(is_ft, ft_keyword, "UNIT"))
+    in_building_name[idx] <- fifelse(is_att, NA_character_,
+                                     fifelse(is_ft,
+                                             fifelse(nzchar(ft_prefix), ft_prefix, NA_character_),
+                                             fifelse(nzchar(bld), bld, NA_character_)))
     in_flat_number[idx]   <- m[hit, 3L]
     num <- .split_number_vec(m[hit, 4L])
     in_number_first[idx]  <- num$first
@@ -1198,8 +1211,20 @@ address_parse <- function(addresses, normalize = TRUE) {
       mapped <- unname(.ATT_FLAT_MAP[pre_slash])
       out$flat_type <- if (!is.na(mapped)) mapped else "UNIT"
     } else {
-      out$flat_type <- "UNIT"
-      if (nzchar(pre_slash)) out$building_name <- pre_slash
+      # A full flat-type word before the slash (e.g. "UNIT 20/110", "FLAT
+      # 3/12") is the flat-type marker too, not a building name — mirrors
+      # .parse_implied_pairs's marker check, and keeps this scalar fallback
+      # consistent with the vectorized fast path.
+      marker <- regmatches(pre_slash, regexec(
+        paste0("^(.*?)\\b(", ft_alt, ")$"), pre_slash, perl = TRUE))[[1L]]
+      if (length(marker) == 3L) {
+        out$flat_type <- unname(ft_map[[marker[[3L]]]])
+        building <- trimws(marker[[2L]])
+        if (nzchar(building)) out$building_name <- building
+      } else {
+        out$flat_type <- "UNIT"
+        if (nzchar(pre_slash)) out$building_name <- pre_slash
+      }
     }
 
     parts <- strsplit(slash_str, "/", fixed = TRUE)[[1L]]

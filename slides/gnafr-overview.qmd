@@ -593,8 +593,8 @@ core_only <- gnaf_match(addresses, con, include_aliases = FALSE)
 %%| fig-height: 2.7
 %%{init: {'flowchart': {'htmlLabels': false}}}%%
 flowchart LR
-  A["Matched alias<br/>UNIT 2 10 OLD STREET"] -->|principal_pid| B["Principal address<br/>UNIT 2 20 NEW ROAD"]
-  B -->|primary_pid| C["Primary address<br/>20 NEW ROAD"]
+  A["Matched alias<br/>27 IVO STREET<br/>NUNDAH QLD 4012"] -->|principal_pid| B["Principal address<br/>(linked record)"]
+  B -->|primary_pid| C["Primary address<br/>(parent site)"]
   style A fill:#fff1db,stroke:#b77526
   style B fill:#e3f2ef,stroke:#21705b
   style C fill:#e9f2fa,stroke:#236188
@@ -607,12 +607,12 @@ flowchart LR
 | `return_principal = TRUE` | Replace address fields with the linked principal |
 | Also `return_primary = TRUE` | Then replace them with the linked primary |
 
-<p class="source">Illustrative linked records; links must exist in the loaded data.</p>
+<p class="source">"27 Ivo Stret, Nundah QLD 4012" is the R stop 3 input, spelling-corrected via alias matching; the principal/primary boxes are illustrative — their content depends on the loaded data.</p>
 
 ::: {.notes}
 - Principal identifies the canonical address behind an alias; primary identifies the parent of a secondary address such as a unit.
 - Those are different relationships. Removing an alias and aggregating units to a site are different decisions.
-- The labels in this diagram are illustrative, based on the package's linked-record test cases.
+- This reuses the "27 Ivo Stret, Nundah QLD 4012" input from R stop 3: the misspelt "Stret" is corrected to "Street" through alias matching, giving the matched-alias box. The principal and primary boxes stay illustrative since their real content depends on the loaded G-NAF release.
 - return_principal changes the PID, label, components and coordinates together. return_primary does the same for the primary record.
 - With both enabled, principal resolution comes first, then primary resolution.
 - Scores and ranks still describe the original candidate. The matched_* columns preserve its address fields whenever a return option is enabled.
@@ -772,7 +772,7 @@ custom_result[, .(address_label, source, total_score, longitude, latitude)]
 - A team could maintain an additional reference source without changing the matching API.
 :::
 
-## 🗺️ Extend the database with SA2 geographies
+## 🗺️ Extend the database with any geography (SA2 shown here)
 
 ```{mermaid}
 %%| eval: true
@@ -782,20 +782,24 @@ custom_result[, .(address_label, source, total_score, longitude, latitude)]
 %%{init: {'flowchart': {'htmlLabels': false}}}%%
 flowchart LR
   A[("Address coordinates")] --> B["Distinct coordinate pairs"]
-  P["SA2 polygons + attributes"] --> C["sf point-in-polygon<br/>lookup in R"]
+  P["Any polygon layer<br/>+ attributes"] --> C["sf point-in-polygon<br/>lookup in R"]
   B --> C
-  C --> D[("Saved PID → SA2 table<br/>inside DuckDB")]
+  C --> D[("Saved PID → geography table<br/>inside DuckDB")]
   M["Final returned address PID"] --> J["Join saved attributes"]
-  D --> J --> R["Match result<br/>+ SA2 code / name"]
+  D --> J --> R["Match result<br/>+ chosen columns"]
   style C fill:#e3f2ef,stroke:#21705b
   style D fill:#e9f2fa,stroke:#236188
 ```
 
 **Do the spatial work once. Reuse a regular table join on later matching runs.**
 
+::: {.callout-tip appearance="simple"}
+`gnaf_add_geography()` takes any `sf` polygon layer under its own `name` — LGA, SA1/SA3, or a team's own service-area boundaries register the same way, alongside SA2.
+:::
+
 ::: {.notes}
-- An SA2 is an ABS Statistical Area Level 2. Here it is an example of attaching polygon attributes to address points.
-- The same mechanism can attach LGA names, service regions or a team's own boundaries.
+- An SA2 is an ABS Statistical Area Level 2. Here it is one example layer; the function itself is not SA2-specific.
+- The same mechanism can attach LGA names, service regions or a team's own boundaries — register several layers under different names and request any subset with `geographies = c(...)`, or `TRUE` for all of them.
 - The package selects distinct coordinate pairs in DuckDB, performs the spatial lookup in R with sf, then stores the attributes by address PID.
 - This preparation step does bring distinct coordinates into R, and currently processes them together. It can take more memory and time than a small matching demo.
 - The saved table is a snapshot. Refresh it after new address data, coordinate changes or new boundaries.
@@ -803,7 +807,7 @@ flowchart LR
 - Final geography joins respect the returned PID and source after principal or primary resolution, without changing score or rank.
 :::
 
-## ▶️ R stop 5: register SA2, then request it
+## ▶️ R stop 5: register a geography, then request it
 
 ```{r}
 #| label: demo-add-sa2
@@ -824,7 +828,10 @@ with_sa2 <- gnaf_match(addresses, con, return_principal = TRUE,
 with_sa2[, .(input_id, address_label, sa2_code, sa2_name)]
 ```
 
+**Any `sf` polygon layer registers the same way — swap in LGA, SA1/SA3 or a custom layer under a different `name`.**
+
 ::: {.notes}
+- SA2 is the example layer for this demo; `gnaf_add_geography()` accepts any `sf` polygon object under any chosen name, not just SA2 — e.g. `gnaf_add_geography(con, "lga_2021", lga_shapes, return_cols = c(lga_code = "LGA_CODE21", lga_name = "LGA_NAME21"), points_crs = 7844)` would register alongside sa2_2021.
 - The repository includes this SA2 2021 boundary file. If it is absent from an installed build, set sa2_file to the local boundary download.
 - points_crs describes the stored address coordinates, not the polygon file. This example assumes the G-NAF source coordinates are GDA2020, so it uses EPSG 7844.
 - Confirm the datum of the extract before the meeting. Use 4283 for GDA94 or 4326 for WGS84 coordinates; the shapes carry their own CRS.
