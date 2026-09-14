@@ -1,0 +1,182 @@
+[
+  {
+    "title": "📍 gnafr",
+    "height": 283,
+    "outside": [],
+    "notes": 0
+  },
+  {
+    "title": "🏢 Six groups, a familiar problem",
+    "height": 796,
+    "outside": [],
+    "notes": 8
+  },
+  {
+    "title": "🎚️ One package, different acceptance rules",
+    "height": 796,
+    "outside": [],
+    "notes": 5
+  },
+  {
+    "title": "🧪 In development, with substantial AI assistance",
+    "height": 796,
+    "outside": [],
+    "notes": 9
+  },
+  {
+    "title": "▶️ R stop 1: start the database build",
+    "height": 796,
+    "outside": [],
+    "notes": 9
+  },
+  {
+    "title": "🦆 DuckDB: a database inside the R process",
+    "height": 796,
+    "outside": [],
+    "notes": 6
+  },
+  {
+    "title": "⚙️ Keep the large joins close to the data",
+    "height": 796,
+    "outside": [],
+    "notes": 8
+  },
+  {
+    "title": "🔁 Reuse the file, plan the writes",
+    "height": 796,
+    "outside": [],
+    "notes": 8
+  },
+  {
+    "title": "🧭 What does gnaf_match() do?",
+    "height": 796,
+    "outside": [],
+    "notes": 8
+  },
+  {
+    "title": "🧩 First, separate the address components",
+    "height": 796,
+    "outside": [],
+    "notes": 7
+  },
+  {
+    "title": "🏔️ Mountains, ordinals… and saints",
+    "height": 796,
+    "outside": [],
+    "notes": 8
+  },
+  {
+    "title": "🔎 R stop 2: try the awkward structures",
+    "height": 796,
+    "outside": [],
+    "notes": 7
+  },
+  {
+    "title": "🔍 Retrieve plausible candidates, then broaden",
+    "height": 796,
+    "outside": [],
+    "notes": 8
+  },
+  {
+    "title": "⚖️ Six components add up to 100",
+    "height": 796,
+    "outside": [],
+    "notes": 8
+  },
+  {
+    "title": "📏 How fuzzy name credit works",
+    "height": 796,
+    "outside": [],
+    "notes": 9
+  },
+  {
+    "title": "🔤 Jaro–Winkler, Jaccard and Levenshtein",
+    "height": 796,
+    "outside": [],
+    "notes": 8
+  },
+  {
+    "title": "▶️ R stop 3: match and inspect",
+    "height": 796,
+    "outside": [],
+    "notes": 7
+  },
+  {
+    "title": "🎛️ Tune the search and the decision separately",
+    "height": 796,
+    "outside": [],
+    "notes": 6
+  },
+  {
+    "title": "🪪 Aliases expand the names we can recognise",
+    "height": 796,
+    "outside": [],
+    "notes": 7
+  },
+  {
+    "title": "🏘️ Matched spelling → principal → primary",
+    "height": 796,
+    "outside": [],
+    "notes": 8
+  },
+  {
+    "title": "📌 Which coordinate are we returning?",
+    "height": 796,
+    "outside": [],
+    "notes": 7
+  },
+  {
+    "title": "👀 R stop 4a: a portable HTML diff",
+    "height": 796,
+    "outside": [],
+    "notes": 6
+  },
+  {
+    "title": "🎚️ R stop 4b: review interactively with Shiny",
+    "height": 796,
+    "outside": [],
+    "notes": 9
+  },
+  {
+    "title": "📝 Turn the review into a repeatable rule",
+    "height": 796,
+    "outside": [],
+    "notes": 7
+  },
+  {
+    "title": "➕ Add addresses your team knows about",
+    "height": 796,
+    "outside": [],
+    "notes": 8
+  },
+  {
+    "title": "🗺️ Extend the database with SA2 geographies",
+    "height": 796,
+    "outside": [],
+    "notes": 7
+  },
+  {
+    "title": "▶️ R stop 5: register SA2, then request it",
+    "height": 796,
+    "outside": [],
+    "notes": 9
+  },
+  {
+    "title": "🤝 A useful shared starting point",
+    "height": 796,
+    "outside": [],
+    "notes": 6
+  },
+  {
+    "title": "🧮 Backup: number, type and flat credit",
+    "height": 796,
+    "outside": [],
+    "notes": 9
+  },
+  {
+    "title": "🔗 Backup: sources and demo preparation",
+    "height": 796,
+    "outside": [],
+    "notes": 8
+  }
+]

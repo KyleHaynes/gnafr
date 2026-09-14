@@ -1,0 +1,9 @@
+During startup - Warning messages:
+1: Setting LC_COLLATE=C.UTF-8 failed 
+2: Setting LC_CTYPE=C.UTF-8 failed 
+3: Setting LC_MONETARY=C.UTF-8 failed 
+4: Setting LC_TIME=C.UTF-8 failed 
+Loading required package: shiny
+Warning: package 'shiny' was built under R version 4.5.3
+
+Listening on http://127.0.0.1:7453

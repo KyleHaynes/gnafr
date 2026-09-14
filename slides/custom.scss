@@ -19,11 +19,12 @@ $presentation-heading-font-weight: 600 !default;
 
 /* Tighter, more readable code on slides */
 .reveal pre code {
-  font-size: 0.72em;
+  font-size: 1em;
   line-height: 1.35;
   padding: 0.6em 0.8em;
+  box-sizing: border-box;
 }
-.reveal pre { box-shadow: none; border: 1px solid #e2e6ec; border-radius: 6px; }
+.reveal pre { font-size: 0.68em; box-sizing: border-box; box-shadow: none; border: 1px solid #e2e6ec; border-radius: 6px; }
 
 /* Tables: quieter borders, tighter rows */
 .reveal table { font-size: 0.75em; border-collapse: collapse; }
@@ -77,6 +78,11 @@ $presentation-heading-font-weight: 600 !default;
   max-width: 100%;
   display: block;
   margin: 0 auto;
+}
+
+.reveal svg[id^="mermaid-figure-"] {
+  max-width: 100%;
+  max-height: 480px;
 }
 
 /* Narrative components used throughout the overview deck. */
@@ -244,3 +250,14 @@ $presentation-heading-font-weight: 600 !default;
 .reveal .callout-note,
 .reveal .callout-important,
 .reveal .callout-tip { border-radius: 8px; }
+
+/* Captured review output stays within the slide; click it to inspect details. */
+.reveal .review-preview {
+  width: 100%;
+  max-height: 470px;
+  object-fit: contain;
+  border: 1px solid #d9e2ec;
+  border-radius: 10px;
+  box-shadow: 0 5px 20px rgba(18, 64, 92, 0.1);
+}
+.reveal .slide figure > figcaption { font-size: 0.48em; color: #6a7686; }

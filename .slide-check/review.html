@@ -1,0 +1,85 @@
+<!DOCTYPE html><html><head><meta charset="utf-8"><title>gnafr diff - results</title><style>.jsdiff .jsdiff-pre { margin: 0; font-family: ui-monospace, monospace; white-space: pre-wrap; }
+.jsdiff-added { background-color: #e6ffed; color: #033a16; }
+.jsdiff-removed { background-color: #ffebe9; color: #82071e; text-decoration: line-through; }
+.jsdiff-context { color: #24292f; }
+body {font-family: -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif; background: #eef2f7; margin: 0; padding: 24px;}
+.panel {background: #f8fbff; border: 1px solid #d9e2ec; border-radius: 14px; padding: 16px 18px;}
+.panel-title {font-size: 16px; font-weight: 700; color: #102a43; margin: 0 0 12px;}
+.metric-grid {display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; margin: 0 0 18px; max-width: 640px;}
+.metric-card {background: linear-gradient(135deg, #102a43, #1f5f8b); color: #fff; border-radius: 14px; padding: 14px 16px;}
+.metric-card--out {background: linear-gradient(135deg, #7f1d1d, #b45309);}
+.metric-label {font-size: 12px; text-transform: uppercase; letter-spacing: 0.08em; opacity: 0.8;}
+.metric-value {font-size: 26px; font-weight: 700; line-height: 1.2; margin-top: 6px;}
+.table-scroll {overflow-x: auto; max-width: 100%;}
+.diff-table {width: 100%; border-collapse: collapse; font-size: 12px; background: #fff; table-layout: fixed;}
+.diff-table th, .diff-table td {padding: 6px 8px; border: 1px solid #d9e2ec; vertical-align: top; text-align: left; overflow-wrap: break-word;}
+.diff-table th {background: #eef2f7; position: sticky; top: 0; font-size: 11px; text-transform: uppercase; letter-spacing: 0.05em; user-select: none;}
+.diff-table th[data-type]:not([data-type="none"]) {cursor: pointer;}
+.diff-table th.sort-asc::after {content: " \25B2"; font-size: 9px;}
+.diff-table th.sort-desc::after {content: " \25BC"; font-size: 9px;}
+.diff-table th .col-resizer {position: absolute; top: 0; right: -3px; width: 6px; height: 100%; cursor: col-resize; z-index: 2;}
+.diff-table th .col-resizer:hover, .diff-table th .col-resizer.resizing {background: rgba(31, 95, 139, 0.35);}
+.diff-table tr:nth-child(even) td {background: #f8fbff;}
+.diff-cell {padding: 0;}
+.diff-cell .jsdiff-pre {white-space: pre-wrap; font-size: 12px; margin: 0;}
+</style></head><body><div class="panel"><div class="panel-title">results &mdash; input vs matched diff</div><div class="metric-grid"><div class="metric-card"><div class="metric-label">Rows</div><div class="metric-value">12</div></div><div class="metric-card"><div class="metric-label">Matched</div><div class="metric-value">11</div></div><div class="metric-card metric-card--out"><div class="metric-label">Unmatched</div><div class="metric-value">1</div></div></div><div class="table-scroll"><table class="diff-table"><colgroup><col style="width:70px"><col style="width:60px"><col style="width:90px"><col style="width:220px"><col style="width:220px"><col></colgroup><thead><tr><th data-type="num">Input ID</th><th data-type="num">Rank</th><th data-type="num">Total score</th><th data-type="text">Standardised</th><th data-type="text">Matched address</th><th data-type="none">Diff</th></tr></thead><tbody><tr><td>1</td><td>1</td><td>100</td><td>U UNIT 2 16 WALLY STREET, NUNDAH QLD 4012</td><td>UNIT 2 16 WALLY ST, NUNDAH QLD 4012</td><td><div class="diff-cell"><div class="jsdiff"><span class="jsdiff-context">U</span><span class="jsdiff-removed"> U</span><span class="jsdiff-context">NIT 2 16 WALLY ST</span><span class="jsdiff-removed">REET</span><span class="jsdiff-context">, NUNDAH QLD 4012</span></div></div></td></tr><tr><td>2</td><td>1</td><td>100</td><td>27 IVO STREET, NUNDAH QLD 4012</td><td>27 IVO ST, NUNDAH QLD 4012</td><td><div class="diff-cell"><div class="jsdiff"><span class="jsdiff-context">27 IVO ST</span><span class="jsdiff-removed">REET</span><span class="jsdiff-context">, NUNDAH QLD 4012</span></div></div></td></tr><tr><td>4</td><td>1</td><td>100</td><td>15 CUMMING PARADE, POINT LOOKOUT QLD 4183</td><td>15 CUMMING PDE, POINT LOOKOUT QLD 4183</td><td><div class="diff-cell"><div class="jsdiff"><span class="jsdiff-context">15 CUMMING P</span><span class="jsdiff-removed">ARA</span><span class="jsdiff-context">DE, POINT LOOKOUT QLD 4183</span></div></div></td></tr><tr><td>1</td><td>2</td><td>97</td><td>U UNIT 2 16 WALLY STREET, NUNDAH QLD 4012</td><td>16 WALLY ST, NUNDAH QLD 4012</td><td><div class="diff-cell"><div class="jsdiff"><span class="jsdiff-removed">U UNIT 2 </span><span class="jsdiff-context">16 WALLY ST</span><span class="jsdiff-removed">REET</span><span class="jsdiff-context">, NUNDAH QLD 4012</span></div></div></td></tr><tr><td>1</td><td>3</td><td>95</td><td>U UNIT 2 16 WALLY STREET, NUNDAH QLD 4012</td><td>UNIT 1 16 WALLY ST, NUNDAH QLD 4012</td><td><div class="diff-cell"><div class="jsdiff"><span class="jsdiff-context">U</span><span class="jsdiff-removed"> U</span><span class="jsdiff-context">NIT </span><span class="jsdiff-removed">2</span><span class="jsdiff-added">1</span><span class="jsdiff-context"> 16 WALLY ST</span><span class="jsdiff-removed">REET</span><span class="jsdiff-context">, NUNDAH QLD 4012</span></div></div></td></tr><tr><td>4</td><td>2</td><td>91</td><td>15 CUMMING PARADE, POINT LOOKOUT QLD 4183</td><td>15 CUMMING PARADE, PT LOOKOUT QLD 4183</td><td><div class="diff-cell"><div class="jsdiff"><span class="jsdiff-context">15 CUMMING PARADE, P</span><span class="jsdiff-removed">OIN</span><span class="jsdiff-context">T LOOKOUT QLD 4183</span></div></div></td></tr><tr><td>3</td><td>1</td><td>90</td><td>61A WILLIAM STREET, PORTSMITH QLD 4870</td><td>4 WILLIAM ST, PORTSMITH QLD 4870</td><td><div class="diff-cell"><div class="jsdiff"><span class="jsdiff-removed">61A</span><span class="jsdiff-added">4</span><span class="jsdiff-context"> WILLIAM ST</span><span class="jsdiff-removed">REET</span><span class="jsdiff-context">, PORTSMITH QLD 4870</span></div></div></td></tr><tr><td>3</td><td>2</td><td>90</td><td>61A WILLIAM STREET, PORTSMITH QLD 4870</td><td>6 WILLIAM ST, PORTSMITH QLD 4870</td><td><div class="diff-cell"><div class="jsdiff"><span class="jsdiff-context">6</span><span class="jsdiff-removed">1A</span><span class="jsdiff-context"> WILLIAM ST</span><span class="jsdiff-removed">REET</span><span class="jsdiff-context">, PORTSMITH QLD 4870</span></div></div></td></tr><tr><td>3</td><td>3</td><td>90</td><td>61A WILLIAM STREET, PORTSMITH QLD 4870</td><td>8 WILLIAM ST, PORTSMITH QLD 4870</td><td><div class="diff-cell"><div class="jsdiff"><span class="jsdiff-removed">61A</span><span class="jsdiff-added">8</span><span class="jsdiff-context"> WILLIAM ST</span><span class="jsdiff-removed">REET</span><span class="jsdiff-context">, PORTSMITH QLD 4870</span></div></div></td></tr><tr><td>4</td><td>3</td><td>86</td><td>15 CUMMING PARADE, POINT LOOKOUT QLD 4183</td><td>15 CUMMING PARADE, NORTH STRADBROKE ISLAND QLD 4183</td><td><div class="diff-cell"><div class="jsdiff"><span class="jsdiff-context">15 CUMMING PARADE, </span><span class="jsdiff-removed">POI</span><span class="jsdiff-context">N</span><span class="jsdiff-added">OR</span><span class="jsdiff-context">T</span><span class="jsdiff-added">H</span><span class="jsdiff-context"> </span><span class="jsdiff-removed">L</span><span class="jsdiff-added">STRADBR</span><span class="jsdiff-context">O</span><span class="jsdiff-removed">O</span><span class="jsdiff-context">K</span><span class="jsdiff-removed">OUT</span><span class="jsdiff-added">E</span><span class="jsdiff-context"> </span><span class="jsdiff-added">ISLAND </span><span class="jsdiff-context">QLD 4183</span></div></div></td></tr><tr><td>2</td><td>2</td><td>62</td><td>27 IVO STREET, NUNDAH QLD 4012</td><td>27 WALLY ST, NUNDAH QLD 4012</td><td><div class="diff-cell"><div class="jsdiff"><span class="jsdiff-context">27 </span><span class="jsdiff-removed">IVO</span><span class="jsdiff-added">WALLY</span><span class="jsdiff-context"> ST</span><span class="jsdiff-removed">REET</span><span class="jsdiff-context">, NUNDAH QLD 4012</span></div></div></td></tr><tr><td>5</td><td>-</td><td>-</td><td>UNKNOWN, ADDRESS</td><td></td><td><div class="help-text">No match to compare</div></td></tr></tbody></table></div></div><script>(function() {
+  var table = document.querySelector('.diff-table');
+  if (!table) return;
+  var tbody = table.tBodies[0];
+  var ths = Array.prototype.slice.call(table.tHead.rows[0].cells);
+  var cols = Array.prototype.slice.call(table.querySelectorAll('colgroup col'));
+  var justResized = false;
+  ths.forEach(function(th, i) {
+    var handle = document.createElement('span');
+    handle.className = 'col-resizer';
+    th.appendChild(handle);
+    handle.addEventListener('mousedown', function(e) {
+      e.preventDefault();
+      var startX = e.pageX;
+      var startWidth = th.offsetWidth;
+      handle.classList.add('resizing');
+      function onMove(ev) {
+        cols[i].style.width = Math.max(40, startWidth + (ev.pageX - startX)) + 'px';
+      }
+      function onUp() {
+        handle.classList.remove('resizing');
+        justResized = true;
+        setTimeout(function() { justResized = false; }, 0);
+        document.removeEventListener('mousemove', onMove);
+        document.removeEventListener('mouseup', onUp);
+      }
+      document.addEventListener('mousemove', onMove);
+      document.addEventListener('mouseup', onUp);
+    });
+  });
+  var sortState = { index: -1, dir: 1 };
+  ths.forEach(function(th, i) {
+    var type = th.getAttribute('data-type');
+    if (!type || type === 'none') return;
+    th.addEventListener('click', function(e) {
+      if (justResized || e.target.classList.contains('col-resizer')) return;
+      var dir = (sortState.index === i) ? -sortState.dir : 1;
+      sortState = { index: i, dir: dir };
+      ths.forEach(function(h) { h.classList.remove('sort-asc', 'sort-desc'); });
+      th.classList.add(dir === 1 ? 'sort-asc' : 'sort-desc');
+      var rows = Array.prototype.slice.call(tbody.rows);
+      rows.sort(function(a, b) {
+        var av = a.cells[i].textContent.trim();
+        var bv = b.cells[i].textContent.trim();
+        if (type === 'num') {
+          var an = parseFloat(av), bn = parseFloat(bv);
+          var aNa = isNaN(an), bNa = isNaN(bn);
+          if (aNa && bNa) return 0;
+          if (aNa) return 1;
+          if (bNa) return -1;
+          return dir * (an - bn);
+        }
+        return dir * av.toLowerCase().localeCompare(bv.toLowerCase());
+      });
+      var frag = document.createDocumentFragment();
+      rows.forEach(function(r) { frag.appendChild(r); });
+      tbody.appendChild(frag);
+    });
+  });
+})();
+</script></body></html>
