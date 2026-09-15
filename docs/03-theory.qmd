@@ -4,7 +4,8 @@ This chapter explains gnafr from the inside: how a raw string becomes structured
 components, how those components become a score, and how `gnaf_match()` decides
 which database rows are even worth scoring. Every number quoted here was read from
 the current source ([`R/parse.R`](../R/parse.R), [`R/score.R`](../R/score.R),
-[`R/match.R`](../R/match.R)) and, where practical, verified by actually running it —
+[`R/score_metrics.R`](../R/score_metrics.R), [`R/gnaf_match.R`](../R/gnaf_match.R))
+and, where practical, verified by actually running it —
 look for the executed code blocks.
 
 ```{mermaid}
@@ -155,9 +156,12 @@ different weights would silently misreport).
 
 ### Postcode (default weight 20)
 
-Exact match scores full weight. Unlike every other component, postcode also has
-**near-miss partial credit** — a difference of 1, 2, or 3 scores 70%, 40%, 20% of the
-weight respectively; anything further scores 0.
+Exact match scores full weight. A difference of 1, 2, or 3 retains the existing
+70%, 40%, 20% partial-credit tiers. Outside those tiers, a single adjacent digit
+transposition receives 40% when the leading digit is unchanged: `4067` versus
+`4076` scores 8/20. Other digit substitutions and swaps involving the leading
+digit receive zero. Postcodes are compared as four digits, preserving the leading
+zero in Northern Territory codes. Missing or invalid values receive zero.
 
 In practice this only ever fires on the **locality fallback** path (@sec-matching-paths):
 the primary postcode-path query joins `ON g.postcode = i.in_postcode`, so by
@@ -185,24 +189,37 @@ gnaf_match("10 Musgrave Road, Red Hill QLD 4058", con, verbose = FALSE)[
 
 ### Suburb / locality (default weight 15) and street name (default weight 40)
 
-Both start from `jaro_winkler_similarity(input, candidate)`, computed by DuckDB's
-built-in `jaro_winkler_similarity()` for every matching path except the exact-label
-fast path, which uses `fast.string::jaro_winkler(..., p = 0.1)` in R — the
-same metric, just evaluated on whichever side of the SQL/R boundary that path runs
-on. Street name carries by far the largest single weight of any component,
-reflecting that it's the strongest discriminator between genuinely different
-addresses that happen to share a postcode and number.
+Both combine two metrics with equal weight:
 
-The raw similarity is then reshaped before being multiplied by the weight, rather
-than used directly: two genuinely unrelated street or suburb names of similar
-length routinely land around 0.5-0.6 on raw Jaro-Winkler (its prefix bonus and
-tolerance for transpositions give it very little floor), which without reshaping
-let a completely wrong street bank a third or more of its 40-point weight. Below a
-similarity of 0.6 the reshaped credit is 5% of weight; from 0.6 to 1.0,
-a squared ramp increases the credit. Full credit requires equal, non-empty
-component text. Imperfect names are capped at one point below the rounded
-component weight (with a floor of zero), so integer rounding cannot turn a
-small difference into exact agreement. Missing or empty names receive zero.
+1. **Jaro–Winkler**, reshaped to suppress its unrelated-name noise floor:
+   `J = 0.05 + 0.95 * clamp((JW - 0.6) / 0.4, 0, 1)^2`.
+2. **Damerau–Levenshtein**, which counts insertions, deletions, substitutions
+   and adjacent transpositions: `E = 1 - distance / max(lengths)`.
+
+The credit fraction is `max(0.05, 0.5 * J + 0.5 * E^2)`. This balances common
+prefixes against edits across the whole name. For example, input `XILLIAM`
+scores 27/40 against `WILLIAM`, ahead of 25/40 against `XILLIAMSON`. Previously,
+the prefix-heavy candidate won 29/40 versus 24/40.
+
+Opposing whole-word directions (`NORTH`/`SOUTH` or `EAST`/`WEST`) halve the
+fraction. This applies independently to each name bucket: `MOUNT GRAVATT EAST`
+versus `MOUNT GRAVATT WEST` scores 17/40 as a street name, previously 36/40.
+Words such as `EASTON` are not directions. Names containing both opposites on
+an axis do not assert a single direction on that axis.
+
+Case and whitespace are normalised before comparison. Full credit requires
+equal, non-empty normalised text. Imperfect names are capped at one point below
+the rounded component weight (with a floor of zero), so integer rounding cannot
+turn a small difference into exact agreement. Missing or blank names receive zero.
+
+DuckDB uses its built-in metrics. R uses `fast.string::jaro_winkler()` and
+`stringdist(..., method = "dl", useBytes = TRUE)` on UTF-8 text, matching DuckDB's
+byte-based comparisons and length denominator. The candidate-pruning bound uses
+the same final name score, so it cannot discard a candidate whose edit evidence
+raises it above `min_score`.
+
+Metric references: [DuckDB text functions](https://duckdb.org/docs/lts/sql/functions/text)
+and the [stringdist manual](https://markvanderloo.r-universe.dev/stringdist/doc/manual.html).
 
 For example, `24 ILLAWONG` must not receive the same street-name credit as
 `ILLAWONG`. The former can arise when a unit marker is misspelled and a unit
@@ -218,15 +235,19 @@ It preserves the original text in `input_raw`. A corrected marker can still
 produce a score of 100 when the standardised components agree exactly.
 
 Scores are weighted agreement measures, not calibrated probabilities or a
-guarantee of a unique address. This stricter name curve lowers some historical
-scores; assess thresholds against labelled examples for your population.
-Versioned cache entries from the previous scoring rules are ignored.
+guarantee of a unique address. The equal metric blend is a heuristic verified
+against regression examples, not fitted to labelled production matches. It raises
+some historical scores and lowers others; assess thresholds against labelled
+examples for your population. Versioned cache entries from previous scoring rules
+are ignored. `dev/benchmark_scoring.R` compares examples and scoring runtime with
+a Git revision without requiring a production database.
 
 ### Street type (default weight 10)
 
-Not a similarity score — a three-tier exact comparison, because abbreviations are
-already canonicalised during parsing and at load time, so by the time scoring runs,
-"the same type" should mean *string-equal*, not merely similar:
+A three-tier comparison after mapping both sides through the street-type
+dictionary. `RD`/`ROAD` and `ST`/`STREET` receive full credit even when a stored
+candidate still contains an abbreviation. Distinct known types keep their
+existing disagreement tier:
 
 - Both sides present and equal → full weight
 - Either side missing a type (including both) → 50% of weight
@@ -264,7 +285,10 @@ Both input and candidate ranges are treated as inclusive intervals:
 | Partial overlap | `10–20` → `18–25` | 30% |
 | Disjoint intervals or missing input number | `10–20` → `30` | 0% |
 
-An explicit lot identifier takes precedence and requires exact agreement.
+An explicit lot identifier takes precedence and requires agreement after removing
+numeric zero padding (`007` equals `7`, and `007A` equals `7A`). Alphabetic suffixes
+and compound identifiers remain significant; `7A` does not equal `7B`. Candidate
+lot filtering uses the same normalisation as scoring.
 The first point in a larger candidate range receives containment credit, rather
 than an exact score. Ranges do not imply odd/even parity, and matching returns
 existing records without creating synthetic addresses.
@@ -343,8 +367,9 @@ With both dimensions absent, the existing full credit is retained.
 
 For matching identifiers, `UNIT`, `APARTMENT` and `FLAT` are equivalent, as are
 `LEVEL` and `FLOOR`. Other conflicting supplied types halve that dimension's
-credit. Case and surrounding whitespace are ignored; alphanumeric identifiers
-remain distinct. The combined component is rounded once, using the same rules
+credit. Case, surrounding whitespace and numeric zero padding are ignored:
+`003` equals `3`, and `003A` equals `3A`. Different digits, alphabetic suffixes
+and compound identifiers remain distinct. The combined component is rounded once, using the same rules
 in R and DuckDB.
 
 For input `UNIT 2 LEVEL 3`, unit 2 on level 3 scores 5, unit 2 with a missing level
@@ -353,7 +378,7 @@ not calibrated probabilities: even a high total can contain a unit conflict.
 Use component scores and labelled examples to set acceptance criteria.
 
 The six public weights and score columns remain unchanged. Locality and alias
-fallback cutoffs scale with custom weights, and cache algorithm version 7 ignores
+fallback cutoffs scale with custom weights, and cache algorithm version 12 ignores
 scores computed by older versions.
 
 ## Matching paths {#sec-matching-paths}

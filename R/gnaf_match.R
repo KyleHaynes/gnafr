@@ -727,7 +727,9 @@ gnaf_match <- function(addresses, con, max_results = 1L, min_score = 60L,
 .number_prefilter_sql <- function() {
   paste(
     "(",
-    "  (i.in_lot_number IS NOT NULL AND TRIM(CAST(g.lot_number AS VARCHAR)) = TRIM(i.in_lot_number))",
+    sprintf("  (i.in_lot_number IS NOT NULL AND %s = %s)",
+      .score_identifier_value_sql("g.lot_number"),
+      .score_identifier_value_sql("i.in_lot_number")),
     "  OR (i.in_lot_number IS NULL AND (",
     "    i.in_number_first IS NULL",
     "    OR g.number_first = i.in_number_first",
@@ -771,21 +773,16 @@ gnaf_match <- function(addresses, con, max_results = 1L, min_score = 60L,
   # Postcode agreement is cheap and known already. Use its actual score so a
   # distant fallback postcode cannot borrow points it will never receive.
   # Bound the remaining components conservatively, including fractional weights.
-  # The street-name term must use the same reshaped similarity
-  # .score_street_name will actually be computed from
-  # (.component_similarity_sql()), not the raw similarity - the reshaping
-  # curve can score a high-but-imperfect similarity *higher* than the raw
-  # value. Keep the bound tied to the scoring curve; omitting the imperfect-
-  # name rounding cap here only makes the bound conservative.
+  # Use the actual name expression, including blended metrics, directions and
+  # exact/rounding rules. A raw-JW bound could discard a valid improved score.
   other_max <- sum(ceiling(unlist(weights[
     !names(weights) %in% c("postcode", "street_name")
   ])))
   street_bound <- sprintf(
-    "(%s) + ROUND_EVEN(%g * %s, 0) + %g >= %d",
-    exprs$score_postcode, weights$street_name,
-    .component_similarity_sql("street_similarity"), other_max, min_score
+    "(%s) + (%s) + %g >= %d",
+    exprs$score_postcode, exprs$score_street_name, other_max, min_score
   )
-  raw_projection <- "SELECT
+  raw_projection <- sprintf("SELECT
     g.address_detail_pid, g.address_label,
     g.postcode, g.locality_name, g.street_name, g.street_type, g.street_suffix,
     g.number_first, g.number_last, g.lot_number,
@@ -794,16 +791,10 @@ gnaf_match <- function(addresses, con, max_results = 1L, min_score = 60L,
     i.in_postcode, i.in_locality, i.in_street_name, i.in_street_type, i.in_street_suffix,
     i.in_number_first, i.in_number_last, i.in_number_suffix, i.in_lot_number,
     i.in_flat_type, i.in_flat_number, i.in_level_type, i.in_level_number,
-    CASE WHEN i.in_locality IS NOT NULL AND i.in_locality = g.locality_name
-         THEN 1.0
-         WHEN i.in_locality IS NOT NULL AND g.locality_name IS NOT NULL
-         THEN jaro_winkler_similarity(i.in_locality, g.locality_name)
-         ELSE 0 END AS suburb_similarity,
-    CASE WHEN i.in_street_name IS NOT NULL AND i.in_street_name = g.street_name
-         THEN 1.0
-         WHEN i.in_street_name IS NOT NULL AND g.street_name IS NOT NULL
-         THEN jaro_winkler_similarity(i.in_street_name, g.street_name)
-         ELSE 0 END AS street_similarity"
+    %s AS suburb_similarity,
+    %s AS street_similarity",
+    .name_similarity_sql("i.in_locality", "g.locality_name"),
+    .name_similarity_sql("i.in_street_name", "g.street_name"))
   candidate_sql <- if (split_number) {
     branch <- function(predicate) sprintf(
       "%s
@@ -814,7 +805,8 @@ gnaf_match <- function(addresses, con, max_results = 1L, min_score = 60L,
     paste(c(
       branch(paste(
         "i.in_lot_number IS NOT NULL",
-        "AND TRIM(CAST(g.lot_number AS VARCHAR)) = TRIM(i.in_lot_number)"
+        sprintf("AND %s = %s", .score_identifier_value_sql("g.lot_number"),
+          .score_identifier_value_sql("i.in_lot_number"))
       )),
       branch(paste(
         "i.in_lot_number IS NULL AND i.in_number_first IS NOT NULL",

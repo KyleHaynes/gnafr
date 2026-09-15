@@ -18,7 +18,9 @@
 # LEVEL_TYPE_CODE values (APT, HSE, L, FL, ...) as synonyms for the full
 # English words address_parse() produces, instead of treating them as a type
 # conflict - previously-cached scores for any unit/level address are stale.
-.CACHE_ALGORITHM_VERSION <- 11L
+# v12: blended name metrics, direction conflicts, postcode transpositions and
+# canonical street types / numeric identifiers change component scores.
+.CACHE_ALGORITHM_VERSION <- 12L
 
 #' Show the current state of the match cache
 #'

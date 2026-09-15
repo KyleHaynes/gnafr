@@ -138,20 +138,22 @@ test_that("postcode score pruning retains every candidate reaching the threshold
   con <- gnaf_connect(":memory:")
   on.exit(gnaf_disconnect(con), add = TRUE)
   gnaf_init(con)
-  rows <- data.table::CJ(postcode = c(4000L, 4001L, 4002L, 4003L, 4999L),
-                          street_name = c("MAIN", "MAINE", "OTHER"))
+  rows <- data.table::CJ(postcode = c(4000L, 4001L, 4002L, 4003L, 4076L, 4999L),
+                          street_name = c("MAIN", "MAINE", "OTHER", "WILLIAM",
+                            "MOUNT GRAVATT EAST", "MOUNT GRAVATT WEST"))
   rows[, `:=`(address_detail_pid = paste0("P", .I),
                address_label = paste("10", street_name, "ROAD"),
                number_first = 10L, street_type = "ROAD", locality_name = "BRISBANE", state = "QLD")]
   suppressMessages(gnaf_add(con, rows))
-  inputs <- address_parse(c("10 Main Road, Brisbane QLD 4000", "10 Main Road, Brisbane QLD"))
+  inputs <- address_parse(c("10 Main Road, Brisbane QLD 4000", "10 Main Road, Brisbane QLD",
+    "10 Xilliam Road, Brisbane QLD 4000", "10 Mount Gravatt East Road, Brisbane QLD 4067"))
   duckdb::duckdb_register(con, "bound_inputs", inputs)
   for (weights in list(.default_match_weights(),
     list(postcode = 20.5, suburb = 15.5, street_name = 39.5, street_type = 9.5, number = 10, flat = 5),
     list(postcode = 50, suburb = 20, street_name = 0, street_type = 10, number = 15, flat = 5))) {
     all <- .run_duckdb_score_query(con, "bound_inputs", "custom_addresses",
       "g.state = i.in_state", .number_prefilter_sql(), weights, 100L, 0L)$matches
-    for (threshold in c(60L, 80L, 95L)) {
+    for (threshold in c(60L, 80L, 86L, 95L)) {
       actual <- .run_duckdb_score_query(con, "bound_inputs", "custom_addresses",
         "g.state = i.in_state", .number_prefilter_sql(), weights, 100L, threshold)$matches
       expected <- all[total_score >= threshold]
@@ -163,5 +165,31 @@ test_that("postcode score pruning retains every candidate reaching the threshold
         expect_equal(actual, expected)
       }
     }
+  }
+})
+
+test_that("bulk ranking uses edit evidence and retains zero-padded lot candidates", {
+  con <- gnaf_connect(":memory:")
+  on.exit(gnaf_disconnect(con), add = TRUE)
+  gnaf_init(con)
+  rows <- data.table::data.table(
+    address_detail_pid = c("Z_CORRECT", "A_PREFIX", "LOT"),
+    address_label = c("10 WILLIAM ROAD", "10 XILLIAMSON ROAD", "LOT 7 MAIN ROAD"),
+    number_first = c(10L, 10L, NA_integer_),
+    lot_number = c(NA_character_, NA_character_, "7"),
+    street_name = c("WILLIAM", "XILLIAMSON", "MAIN"), street_type = "ROAD",
+    locality_name = "BRISBANE", state = "QLD", postcode = 4000L)
+  suppressMessages(gnaf_add(con, rows))
+  parsed <- address_parse(c("10 Xilliam Road, Brisbane QLD 4000",
+                             "Lot 007 Main Road, Brisbane QLD 4000"))
+  duckdb::duckdb_register(con, "metric_inputs", parsed)
+  for (split in c(FALSE, TRUE)) {
+    out <- .run_duckdb_score_query(con, "metric_inputs", "custom_addresses",
+      "g.postcode = i.in_postcode",
+      if (split) "TRUE" else .number_prefilter_sql(),
+      .default_match_weights(), 1L, 86L, split_number = split)$matches
+    data.table::setorder(out, input_id)
+    expect_identical(out$address_detail_pid, c("Z_CORRECT", "LOT"))
+    expect_identical(out$score_number, c(10L, 10L))
   }
 })

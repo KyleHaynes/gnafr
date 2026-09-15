@@ -72,6 +72,10 @@
 
 .score_mapped_value_sql <- function(x, map) {
   value <- .score_value_sql(x)
+  # Identity entries already fall through to ELSE; omitting them keeps the
+  # repeated SQL expressions small without changing the dictionary.
+  map <- map[names(map) != unname(map)]
+  if (!length(map)) return(value)
   paste("CASE", value, paste(sprintf("WHEN '%s' THEN '%s'", names(map), map), collapse = " "),
         "ELSE", value, "END")
 }
@@ -130,8 +134,8 @@
   g_end <- sprintf("COALESCE(%s.number_last, %s)", g, g_first)
   i_suffix <- .score_value_sql(paste0(i, ".in_number_suffix"))
   g_suffix <- sprintf("COALESCE(REGEXP_EXTRACT(%s, '^[0-9]+([A-Z]?)', 1), '')", token)
-  i_lot <- .score_value_sql(paste0(i, ".in_lot_number"))
-  g_lot <- .score_value_sql(paste0(g, ".lot_number"))
+  i_lot <- .score_identifier_value_sql(paste0(i, ".in_lot_number"))
+  g_lot <- .score_identifier_value_sql(paste0(g, ".lot_number"))
   # Inclusive interval comparisons preserve exact ranges and also retrieve
   # individual addresses within an input range. Partial overlap is weakest.
   interval <- sprintf(paste0(
@@ -179,8 +183,8 @@
   # Either side missing a suffix is "missing evidence" (50%), not a mismatch
   # - see the SQL twin.
   suffix <- data.table::fcase(i_suffix == g_suffix, 1, i_suffix == "" | g_suffix == "", 0.5, default = 0)
-  i_lot <- .score_value(.pair_column(pairs, "in_lot_number"))
-  g_lot <- .score_value(.pair_column(pairs, "lot_number"))
+  i_lot <- .score_identifier_value(.pair_column(pairs, "in_lot_number"))
+  g_lot <- .score_identifier_value(.pair_column(pairs, "lot_number"))
   as.integer(round(weight * data.table::fifelse(
     i_lot != "", as.numeric(i_lot == g_lot), interval * suffix
   )))
@@ -188,21 +192,25 @@
 
 # A direction qualifies the street identity without adding a seventh weight.
 .score_street_type_sql <- function(weight, i, g) {
-  i_type <- .score_value_sql(paste0(i, ".in_street_type"))
-  g_type <- .score_value_sql(paste0(g, ".street_type"))
+  i_type <- .score_mapped_value_sql(paste0(i, ".in_street_type"), .get_street_type_map())
+  g_type <- .score_mapped_value_sql(paste0(g, ".street_type"), .get_street_type_map())
   i_suffix <- .score_mapped_value_sql(paste0(i, ".in_street_suffix"), .SCORE_DIRECTIONS)
   g_suffix <- .score_mapped_value_sql(paste0(g, ".street_suffix"), .SCORE_DIRECTIONS)
   # Check "missing" before "equal": both sides coerce a missing type to '',
   # so checking equality first would let two absent types masquerade as an
   # agreement instead of the intended missing-evidence tier.
-  type <- sprintf("CASE WHEN %1$s = '' OR %2$s = '' THEN 0.5 WHEN %1$s = %2$s THEN 1.0 ELSE 0.4 END", i_type, g_type)
+  raw_input <- .score_value_sql(paste0(i, ".in_street_type"))
+  raw_candidate <- .score_value_sql(paste0(g, ".street_type"))
+  type <- sprintf(paste0("CASE WHEN %1$s = '' OR %2$s = '' THEN 0.5 ",
+    "WHEN %1$s = %2$s THEN 1.0 WHEN %3$s = %4$s THEN 1.0 ELSE 0.4 END"),
+    raw_input, raw_candidate, i_type, g_type)
   suffix <- sprintf("CASE WHEN %1$s = %2$s THEN 1.0 WHEN %1$s = '' OR %2$s = '' THEN 0.5 ELSE 0.0 END", i_suffix, g_suffix)
   sprintf("CAST(ROUND_EVEN(%g * (%s) * (%s), 0) AS INTEGER)", weight, type, suffix)
 }
 
 .score_street_type <- function(pairs, weight) {
-  i_type <- .score_value(pairs$in_street_type)
-  g_type <- .score_value(pairs$street_type)
+  i_type <- .score_mapped_value(pairs$in_street_type, .get_street_type_map())
+  g_type <- .score_mapped_value(pairs$street_type, .get_street_type_map())
   i_suffix <- .score_mapped_value(.pair_column(pairs, "in_street_suffix"), .SCORE_DIRECTIONS)
   g_suffix <- .score_mapped_value(.pair_column(pairs, "street_suffix"), .SCORE_DIRECTIONS)
   # Missing-evidence check must precede the equality check - see the SQL twin.
@@ -222,10 +230,10 @@
 
 .score_flat <- function(pairs, weight) {
   value <- function(name) .score_value(.pair_column(pairs, name))
-  i_flat <- value("in_flat_number")
-  g_flat <- value("flat_number")
-  i_level <- value("in_level_number")
-  g_level <- value("level_number")
+  i_flat <- .score_identifier_value(value("in_flat_number"))
+  g_flat <- .score_identifier_value(value("flat_number"))
+  i_level <- .score_identifier_value(value("in_level_number"))
+  g_level <- .score_identifier_value(value("level_number"))
   flat <- .score_identifier(i_flat, g_flat,
     .score_mapped_value(value("in_flat_type"), .get_score_flat_type_map()),
     .score_mapped_value(value("flat_type"), .get_score_flat_type_map()))
@@ -245,7 +253,7 @@
 }
 
 .score_flat_sql <- function(weight, i, g) {
-  value <- function(alias, name) .score_value_sql(paste0(alias, ".", name))
+  value <- function(alias, name) .score_identifier_value_sql(paste0(alias, ".", name))
   i_flat <- value(i, "in_flat_number")
   g_flat <- value(g, "flat_number")
   i_level <- value(i, "in_level_number")
@@ -308,27 +316,34 @@
 # long names with one small edit. Exact text is checked independently of JW:
 # implementations can return 1 for distinct strings in edge cases.
 .score_name <- function(input, candidate, weight) {
+  input <- .score_name_value(input)
+  candidate <- .score_name_value(candidate)
   present <- !is.na(input) & !is.na(candidate) & nzchar(input) & nzchar(candidate)
   result <- integer(length(input))
   exact <- present & input == candidate
   result[exact] <- as.integer(round(weight))
   fuzzy <- present & !exact
   if (any(fuzzy)) {
-    similarity <- fast.string::jaro_winkler(input[fuzzy], candidate[fuzzy], p = 0.1)
+    similarity <- .name_similarity_factor(input[fuzzy], candidate[fuzzy])
     result[fuzzy] <- as.integer(pmin(
       max(0, round(weight) - 1),
-      round(weight * .component_similarity_factor(similarity))
+      round(weight * similarity)
     ))
   }
   result
 }
 
-.score_name_sql <- function(input, candidate, weight, similarity) {
+.score_name_sql <- function(input, candidate, weight, similarity = NULL) {
+  # Optional similarity is an already-computed credit factor, shared with the
+  # pruning bound in the bulk query; it must include every name metric.
+  if (is.null(similarity)) similarity <- .name_similarity_sql(input, candidate)
+  input <- .score_name_value_sql(input)
+  candidate <- .score_name_value_sql(candidate)
   sprintf(paste0(
     "CASE WHEN %1$s IS NULL OR %2$s IS NULL OR %1$s = '' OR %2$s = '' THEN 0",
     " WHEN %1$s = %2$s THEN %3$d",
     " ELSE CAST(LEAST(%4$d, ROUND_EVEN(%5$g * %6$s, 0)) AS INTEGER) END"
   ), input, candidate, as.integer(round(weight)),
   as.integer(max(0, round(weight) - 1)), weight,
-  .component_similarity_sql(similarity))
+  similarity)
 }

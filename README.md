@@ -91,6 +91,20 @@ fields (`address_detail_pid`, `address_label`, `longitude`, `latitude`, …) plu
 `score_street_name`, `score_street_type`, `score_number`, `score_flat`). Inputs
 with no match above `min_score` are retained with `matched = FALSE`.
 
+The six scoring buckets use evidence suited to each field:
+
+| Bucket | Default weight | Comparison |
+|---|---:|---|
+| Postcode | 20 | Exact, existing numeric proximity tiers, limited adjacent-digit transposition credit |
+| Suburb | 15 | Equal blend of reshaped Jaro–Winkler and squared normalised Damerau–Levenshtein similarity; opposing directions halve credit |
+| Street name | 40 | Same name metrics; full credit requires equal normalised text |
+| Street type | 10 | Canonical abbreviations, missing/conflicting type tiers, explicit direction checks |
+| Number | 10 | Exact numbers, interval overlap, suffix checks; zero-padded lot identifiers normalised |
+| Flat | 5 | Separate unit/level agreement, canonical types and zero-padding normalisation |
+
+See [the scoring formulas](docs/03-theory.qmd#sec-scoring) for details. These are
+agreement scores; the metric blend has not been calibrated as a probability.
+
 Key arguments:
 
 | Argument | Default | Effect |

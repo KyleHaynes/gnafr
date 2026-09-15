@@ -517,3 +517,77 @@ test_that("reshaped street_name/suburb similarity agrees between R and DuckDB", 
   expect_true(all(r_scored$score_street_name[2] < r_scored$score_street_name[1]))
   expect_true(all(r_scored$score_suburb[3] < r_scored$score_suburb[1]))
 })
+
+test_that("name metrics distinguish small edits, shared prefixes and opposing directions", {
+  score <- function(input, candidate) gnafr:::.score_name(input, candidate, 40)
+  # A single leading substitution must outrank a much longer shared prefix.
+  expect_gt(score("XILLIAM", "WILLIAM"), score("XILLIAM", "XILLIAMSON"))
+  expect_gt(score("BIRSTOL", "BRISTOL"), score("BIRSTOL", "BRISTOLTON"))
+  expect_gt(score("MARHTA", "MARTHA"), score("MARHTA", "MARGARET"))
+  expect_lt(score("WILLIAM", "WILLIAMSON"), 29L)
+  expect_lte(score("MOUNT GRAVATT EAST", "MOUNT GRAVATT WEST"), 20L)
+  expect_lte(score("NORTH EAST LAKES", "NORTH WEST LAKES"), 20L)
+  expect_gt(score("MOUNT GRAVAT EAST", "MOUNT GRAVATT EAST"), 30L)
+  # Direction words are whole tokens: EASTON is not EAST.
+  expect_gt(score("EASTON WEST", "EASTON WSET"), 20L)
+  expect_lt(score("CERIUM", "TUCKEROO"), 5L)
+  expect_lt(score("24 ILLAWONG", "ILLAWONG"), 40L)
+  expect_identical(score(" main\t road ", "MAIN ROAD"), 40L)
+  expect_identical(score(" \t ", "MAIN"), 0L)
+})
+
+test_that("postcode transpositions receive limited credit without rewarding arbitrary digit edits", {
+  pairs <- make_pair("ROAD", "ROAD",
+    in_postcode = c(4067L, 4067L, 4067L, 4067L, 800L, NA_integer_),
+    postcode = c(4076L, 4607L, 4007L, 4608L, 8000L, 4067L))
+  expect_identical(gnafr:::.score_pairs(pairs)$score_postcode, c(8L, 8L, 0L, 0L, 0L, 0L))
+})
+
+test_that("street type aliases agree but different known types and directions conflict", {
+  pairs <- make_pair(c("RD", "ST", "ROAD", "ROAD"),
+                     c("ROAD", "STREET", "COURT", "ROAD"))
+  pairs[4L, `:=`(in_street_suffix = "N", street_suffix = "S")]
+  expect_identical(gnafr:::.score_pairs(pairs)$score_street_type, c(10L, 10L, 4L, 0L))
+})
+
+test_that("zero-padded identifiers agree without confusing different units or lots", {
+  pairs <- make_pair("ROAD", "ROAD",
+    in_flat_number = c("003", "003A", "003A", "003", "A003", "000"),
+    flat_number = c("3", "3A", "3B", "30", "A3", "0"))
+  expect_identical(gnafr:::.score_pairs(pairs)$score_flat, c(5L, 5L, 0L, 0L, 0L, 5L))
+  lots <- make_pair("ROAD", "ROAD", in_lot_number = c("007", "007A", "007A"),
+                    lot_number = c("7", "7A", "7B"))
+  expect_identical(gnafr:::.score_pairs(lots)$score_number, c(10L, 10L, 0L))
+  levels <- make_pair("ROAD", "ROAD", in_level_number = "003", level_number = "3")
+  expect_identical(gnafr:::.score_pairs(levels)$score_flat, 5L)
+})
+
+test_that("all six metric buckets agree in R and SQL across missing values and custom weights", {
+  pairs <- make_pair("RD", "ROAD",
+    in_street_name = c("XILLIAM", "BIRSTOL", "MOUNT GRAVATT EAST", "NORTH EAST LAKES",
+      " main\t road ", " ", NA, "CA", "CAF\u00c9", "LONG PREFIX A"),
+    street_name = c("WILLIAM", "BRISTOL", "MOUNT GRAVATT WEST", "NORTH WEST LAKES",
+      "MAIN ROAD", "MAIN", "MAIN", "ABC", "CAFE", "LONG PREFIX B"),
+    in_postcode = c(4067L, 4067L, 4067L, 4000L, 4000L, NA, 800L, 800L, 4000L, 4067L),
+    postcode = c(4076L, 4607L, 4007L, 4001L, 4000L, 4000L, 8000L, 800L, 4002L, 4608L),
+    in_flat_number = "003A", flat_number = "3A",
+    in_level_number = "02", level_number = "2",
+    in_lot_number = "0007", lot_number = "7")
+  pairs[, `:=`(in_locality = in_street_name, locality_name = street_name)]
+  con <- gnaf_connect(":memory:")
+  on.exit(gnaf_disconnect(con), add = TRUE)
+  duckdb::duckdb_register(con, "metric_pairs", pairs)
+  for (weights in list(gnafr:::.default_match_weights(),
+    list(postcode = 20.5, suburb = 15.5, street_name = 39.5, street_type = 9.5, number = 10, flat = 5),
+    list(postcode = 0, suburb = 0, street_name = 0, street_type = 0, number = 100, flat = 0))) {
+    expressions <- gnafr:::.score_sql_exprs(weights, i = "p", g = "p")
+    sql <- paste(sprintf("%s AS %s", expressions, names(expressions)), collapse = ", ")
+    actual <- as.data.table(DBI::dbGetQuery(con, paste("SELECT", sql, "FROM metric_pairs p")))
+    expected <- gnafr:::.score_pairs(copy(pairs), weights)
+    expect_equal(actual, expected[, names(expressions), with = FALSE])
+    expect_true(all(vapply(actual, is.integer, logical(1L))))
+    expect_true(all(as.matrix(actual) >= 0L))
+    expect_identical(expected$total_score, as.integer(rowSums(actual)))
+  }
+  expect_identical(gnafr:::.score_pairs(pairs[0L])$total_score, integer())
+})
