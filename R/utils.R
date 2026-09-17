@@ -135,11 +135,27 @@
   fast.string::ftrimws(x)
 }
 
+# Respect declared encodings and discard invalid bytes before any regex or
+# case conversion. Keep the original input separately for diagnostics.
+.repair_address_encoding <- function(x) iconv(x, to = "UTF-8", sub = "")
+
 # Preserve comma structure until the parser has identified the street/locality
 # boundary. Other callers still receive the historical comma-free form through
 # .normalize_addr().
 .normalize_addr_keep_commas <- function(x) {
+  x <- .repair_address_encoding(x)
   x <- stringi::stri_trans_toupper(fast.string::ftrimws(x))
+  x <- stringi::stri_replace_all_regex(
+    x, "&(?:NBSP|#0*(?:32|160)|#X0*(?:20|A0));", " "
+  )
+  x <- stringi::stri_replace_all_regex(x, "[\\p{Z}\\s]+", " ")
+  x <- stringi::stri_replace_all_regex(x, "[\u2010-\u2015\u2212]", "-")
+  x <- stringi::stri_replace_all_regex(
+    x, "(?<=[A-Z0-9])\\s*([-/])\\s*(?=[A-Z0-9])", "$1"
+  )
+  # A letter-only slash suffix has the same structure as an attached suffix.
+  # Normalize it before unit extraction so UNIT 3 40/B and 3/40/B agree.
+  x <- stringi::stri_replace_all_regex(x, "(\\d+)/([A-Z])(?=\\s|,|$)", "$1$2")
   x <- fast.string::fgsub(".", " ", x, fixed = TRUE)
   x <- fast.string::fgsub("\\s*,\\s*", ",", x)
   x <- fast.string::fgsub("\\s+", " ", x)

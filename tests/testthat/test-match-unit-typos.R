@@ -1,3 +1,53 @@
+test_that("malformed encoding does not abort address matching", {
+  con <- gnaf_connect(":memory:")
+  on.exit(gnaf_disconnect(con), add = TRUE)
+  gnaf_init(con)
+  row <- data.table::data.table(
+    address_detail_pid = "ENCODING-TEST", number_first = 10L,
+    street_name = "SMITH", street_type = "STREET",
+    locality_name = "BRISBANE", state = "QLD", postcode = 4000L
+  )
+  suppressMessages(gnaf_add(con, row))
+  bad <- paste0("10 Smith St, Brisbane QLD 4000", rawToChar(as.raw(0xFF)))
+  Encoding(bad) <- "UTF-8"
+  input <- c(bad, "10 Smith St, Brisbane QLD 4000")
+  expect_no_warning(out <- gnaf_match(input, con, cache = FALSE, verbose = FALSE))
+  expect_identical(out$input_raw, input)
+  expect_equal(out$address_detail_pid, rep("ENCODING-TEST", 2L))
+  expect_true(all(out$matched))
+})
+
+test_that("slash-suffix unit repairs invalidate old matches with the same label", {
+  con <- gnaf_connect(":memory:")
+  on.exit(gnaf_disconnect(con), add = TRUE)
+  gnaf_init(con)
+  rows <- data.table::data.table(
+    address_detail_pid = c("WRONG-UNIT", "CORRECT-UNIT"),
+    address_label = c("UNIT 2 40B SMITH STREET, WEST END QLD 4101",
+                      "UNIT 3 40B SMITH STREET, WEST END QLD 4101"),
+    number_first = 40L, number_first_suffix = "B",
+    flat_type = "UNIT", flat_number = c("2", "3"),
+    street_name = "SMITH", street_type = "STREET",
+    locality_name = "WEST END", state = "QLD", postcode = 4101L
+  )
+  suppressMessages(gnaf_add(con, rows))
+  # The misspelled street avoids the exact-label shortcut and exercises scoring.
+  input <- "Unit 3 40/B Smit St, West End QLD 4101"
+  key <- "UNIT 3 40B SMIT STREET, WEST END QLD 4101"
+  expect_identical(gnafr:::.standardise_input(address_parse(input)), key)
+  DBI::dbExecute(con, paste(
+    "INSERT INTO gnaf_match_cache",
+    "(input_standardised, address_detail_pid, total_score, algorithm_version)",
+    "VALUES (?, 'WRONG-UNIT', 100, 12)"
+  ), params = list(key))
+  for (cache in c(FALSE, TRUE, TRUE)) {
+    out <- gnaf_match(input, con, cache = cache, verbose = FALSE)
+    expect_identical(out$address_detail_pid, "CORRECT-UNIT")
+    expect_identical(out$in_flat_number, "3")
+    expect_lt(out$total_score, 100L)
+  }
+})
+
 test_that("Illawong unit typo never redirects to street number three", {
   con <- gnaf_connect(":memory:")
   on.exit(gnaf_disconnect(con), add = TRUE)

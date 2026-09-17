@@ -285,6 +285,14 @@ Times assume a laptop with SSD and ~3M GNAF records for QLD. Results vary with C
 
 **Parsing** — parsing is vectorised and repeated normalised inputs are parsed once. Keep repeated values in the same call so they share this work.
 
+`address_parse()` preserves `input_raw` while repairing malformed encoding,
+pasted whitespace, and spacing around ranges and slash numbers. For example,
+`Unit 3 40/B Smith St` retains unit `3` and street number `40B`. These structural
+repairs also run with `normalize = FALSE`; that option controls abbreviation
+expansion. Commas between street and suburb help resolve ambiguous names and
+directions. Locality spelling corrections such as `Rocky View` to `Rockyview`
+are left to matching against reference addresses.
+
 **Postcode spread** — if 100k addresses all share one postcode, the broad fallback join can be large (100k × 2000 GNAF records = 200M pairs). Prefer the tight join path by ensuring street numbers parse correctly.
 
 **DB I/O** — exact number, range, lot, and missing-number branches reduce candidate cardinality before fuzzy scoring. Keep DuckDB statistics current with `ANALYZE` after out-of-band bulk loads.

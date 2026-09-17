@@ -20,7 +20,9 @@
 # conflict - previously-cached scores for any unit/level address are stale.
 # v12: blended name metrics, direction conflicts, postcode transpositions and
 # canonical street types / numeric identifiers change component scores.
-.CACHE_ALGORITHM_VERSION <- 12L
+# v13: locality boundaries and unit/slash-suffix parsing change components even
+# when the standardised cache key is unchanged (UNIT 3 40/B becomes UNIT 3 40B).
+.CACHE_ALGORITHM_VERSION <- 13L
 
 #' Show the current state of the match cache
 #'

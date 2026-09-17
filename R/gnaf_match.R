@@ -266,7 +266,8 @@ gnaf_match <- function(addresses, con, max_results = 1L, min_score = 60L,
   # Ideal for re-processing previously matched/standardised output.
   # ------------------------------------------------------------------
   exact_timer <- proc.time()[["elapsed"]]
-  raw_is_standard <- toupper(trimws(parsed$input_raw)) == parsed$input_standardised
+  raw_is_standard <- toupper(trimws(.repair_address_encoding(parsed$input_raw))) ==
+    parsed$input_standardised
   use_exact_label_path <- nrow(parsed) <= 100L ||
     mean(raw_is_standard, na.rm = TRUE) >= 0.05
   exact_path <- if (isTRUE(use_exact_label_path)) {
