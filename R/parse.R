@@ -10,7 +10,8 @@
 .LOCALITY_COLLISION_WORDS <- c(
   "ST", "NORTH", "NTH", "SOUTH", "STH", "EAST", "WEST", "HILL",
   "HILLS", "HEIGHTS", "BAY", "BEACH", "ISLAND", "PARK", "POINT",
-  "PORT", "VALLEY"
+  "PORT", "VALLEY", "VIEW", "MILE", "RING", "END",
+  "GLEN", "GROVE", "RISE", "VALE", "DALE", "WATERS", "WOOD"
 )
 
 # Abbreviation-expansion tables for .expand_abbreviations. Patterns are applied
@@ -131,7 +132,7 @@ address_parse <- function(addresses, normalize = TRUE) {
   if (length(rows) == 0L) return(x)
   vocabulary <- c("UNIT", "FLAT", "APARTMENT", "SUITE")
   tokens <- unique(parts[rows, 3L])
-  correction <- vapply(tokens, function(token) {
+  candidates <- lapply(tokens, function(token) {
     close <- as.vector(utils::adist(token, vocabulary)) == 1L
     # Adjacent transpositions (UNTI) count as one typing error too.
     letters <- strsplit(token, "", fixed = TRUE)[[1L]]
@@ -141,14 +142,25 @@ address_parse <- function(addresses, normalize = TRUE) {
       paste0(value, collapse = "")
     }, character(1L))
     choices <- vocabulary[close | vocabulary %in% swapped]
-    if (length(choices) == 1L) choices else NA_character_
-  }, character(1L))
-  replacements <- unname(correction[parts[rows, 3L]])
-  take <- !is.na(replacements)
+    choice <- if (length(choices) == 1L) choices else NA_character_
+    list(choice = choice,
+         is_plural = !is.na(choice) && identical(token, paste0(choice, "S")))
+  })
+  names(candidates) <- tokens
+  choice     <- vapply(candidates[parts[rows, 3L]], `[[`, character(1L), "choice")
+  is_plural  <- vapply(candidates[parts[rows, 3L]], `[[`, "is_plural", FUN.VALUE = logical(1L))
+  has_prefix <- nzchar(trimws(parts[rows, 2L]))
+  # A bare plural with nothing before it ("UNITS 3 24 ...") is still a
+  # dwelling-marker typo -- G-NAF markers are never written in the plural in
+  # isolation. When real text precedes it, a grammatically valid plural is an
+  # ordinary word ("PARK VIEW APARTMENTS") and must be left alone; genuine
+  # non-plural misspellings/transpositions still get corrected either way.
+  take <- !is.na(choice) & !(is_plural & has_prefix)
   rows <- rows[take]
+  replacements <- choice[take]
   if (length(rows) > 0L) {
     start <- nchar(parts[rows, 2L]) + 1L
-    x[rows] <- paste0(parts[rows, 2L], replacements[take],
+    x[rows] <- paste0(parts[rows, 2L], replacements,
       stringi::stri_sub(x[rows], from = start + nchar(parts[rows, 3L])))
   }
   x
@@ -441,6 +453,7 @@ address_parse <- function(addresses, normalize = TRUE) {
 
   work <- normalized
   rem  <- which(valid)
+  claimed <- rep(FALSE, n)
 
   m <- stringi::stri_match_first_regex(work[rem], a_re)
   hit <- !is.na(m[, 1L])
@@ -449,6 +462,7 @@ address_parse <- function(addresses, normalize = TRUE) {
     in_state[idx]    <- m[hit, 2L]
     in_postcode[idx] <- as.integer(m[hit, 3L])
     work[idx] <- fast.string::ftrimws(fast.string::fsub(a_re, "", work[idx]))
+    claimed[idx] <- TRUE
   }
   rem <- rem[!hit]
 
@@ -459,6 +473,7 @@ address_parse <- function(addresses, normalize = TRUE) {
     in_postcode[idx] <- as.integer(m[hit, 2L])
     in_state[idx]    <- m[hit, 3L]
     work[idx] <- fast.string::ftrimws(fast.string::fsub(b_re, "", work[idx]))
+    claimed[idx] <- TRUE
   }
   rem <- rem[!hit]
 
@@ -468,6 +483,7 @@ address_parse <- function(addresses, normalize = TRUE) {
   if (length(idx) > 0L) {
     in_state[idx] <- m[hit, 2L]
     work[idx] <- fast.string::ftrimws(fast.string::fsub(c_re, "", work[idx]))
+    claimed[idx] <- TRUE
   }
   rem <- rem[!hit]
 
@@ -477,12 +493,60 @@ address_parse <- function(addresses, normalize = TRUE) {
   if (length(idx) > 0L) {
     in_postcode[idx] <- as.integer(m[hit, 2L])
     work[idx] <- fast.string::ftrimws(fast.string::fsub(d_re, "", work[idx]))
+    claimed[idx] <- TRUE
   }
 
   has_boundary <- boundary$meaningful & valid
   if (any(has_boundary)) {
     work[has_boundary] <- boundary$street[has_boundary]
     in_locality[has_boundary] <- boundary$locality[has_boundary]
+  }
+
+  # ------------------------------------------------------------------
+  # Stage 1b: leading "STATE POSTCODE"/"POSTCODE STATE" order, e.g.
+  # "4012 QLD NUNDAH". Only tried on rows Stage 1 didn't already claim and
+  # that aren't a comma-boundary row. When the remainder has no digits left,
+  # this input has no street portion by definition (the "postcode state
+  # locality" convention never has a street component) -- fold it into the
+  # existing has_boundary short-circuit so it skips the street-parsing
+  # stages below. A remainder that still has digits (a rare leading-geo
+  # address with a real street, e.g. "4000 QLD 12 Smith Street") is left
+  # alone and falls through to the normal pipeline.
+  # ------------------------------------------------------------------
+  la_re <- paste0("^(\\b", st_abbr, "\\b)\\s+(\\b\\d{4}\\b)\\s*")  # ^STATE POSTCODE
+  lb_re <- paste0("^(\\b\\d{4}\\b)\\s+(\\b", st_abbr, "\\b)\\s*")  # ^POSTCODE STATE
+  lead_claimed <- rep(FALSE, n)
+  lead_rem <- which(valid & !claimed & !has_boundary)
+
+  m <- stringi::stri_match_first_regex(work[lead_rem], la_re)
+  hit <- !is.na(m[, 1L])
+  idx <- lead_rem[hit]
+  if (length(idx) > 0L) {
+    in_state[idx]    <- m[hit, 2L]
+    in_postcode[idx] <- as.integer(m[hit, 3L])
+    work[idx] <- fast.string::ftrimws(fast.string::fsub(la_re, "", work[idx]))
+    lead_claimed[idx] <- TRUE
+  }
+  lead_rem <- lead_rem[!hit]
+
+  m <- stringi::stri_match_first_regex(work[lead_rem], lb_re)
+  hit <- !is.na(m[, 1L])
+  idx <- lead_rem[hit]
+  if (length(idx) > 0L) {
+    in_postcode[idx] <- as.integer(m[hit, 2L])
+    in_state[idx]    <- m[hit, 3L]
+    work[idx] <- fast.string::ftrimws(fast.string::fsub(lb_re, "", work[idx]))
+    lead_claimed[idx] <- TRUE
+  }
+
+  if (any(lead_claimed)) {
+    lg_idx <- which(lead_claimed)
+    bypass <- lg_idx[!fast.string::fgrepl("[0-9]", work[lg_idx])]
+    if (length(bypass) > 0L) {
+      in_locality[bypass] <- fast.string::ftrimws(work[bypass])
+      work[bypass] <- ""
+      has_boundary[bypass] <- TRUE
+    }
   }
 
   # ------------------------------------------------------------------
@@ -517,7 +581,12 @@ address_parse <- function(addresses, normalize = TRUE) {
       words_after_number <- fast.string::fgrepl(
         "^.*?\\d+[A-Z]?(?:-\\d+[A-Z]?)?\\s+\\S+\\s+\\S+", work[idx]
       )
-      invalidate <- words_after_number & st_end[idx] == nchar(work[idx])
+      # A bare, house-number-less string (e.g. testing "FLINDERS VIEW" alone)
+      # has no earlier street-type token to fall back on at all; treat it as
+      # type-less too, not just the digit-anchored pattern above.
+      no_digits <- !fast.string::fgrepl("[0-9]", work[idx])
+      invalidate <- (words_after_number | no_digits) &
+        st_end[idx] == fast.string::fnchar(work[idx])
       forced_type_less[idx[invalidate]] <- TRUE
       st_pos[idx[invalidate]] <- NA_integer_
       st_end[idx[invalidate]] <- NA_integer_
@@ -686,6 +755,24 @@ address_parse <- function(addresses, normalize = TRUE) {
   }
   cand <- cand[!hit]
 
+  # 4a2: number+letter slash suffix (e.g. "40/B") -- a bare letter after the
+  # slash with no digits is a street-number alpha suffix (like "40B" written
+  # with a slash), not a unit/street split. Tried only after 4a's digit/digit
+  # pattern above has already failed to match.
+  m <- stringi::stri_match_first_regex(
+    bst[cand], "^(.*?)\\b(\\d+)/([A-Z])\\b\\s*(.*)$")
+  hit <- !is.na(m[, 1L])
+  idx <- cand[hit]
+  if (length(idx) > 0L) {
+    bld <- trimws(m[hit, 2L])
+    in_building_name[idx] <- fifelse(nzchar(bld), bld, NA_character_)
+    in_number_first[idx]  <- as.integer(m[hit, 3L])
+    in_number_suffix[idx] <- m[hit, 4L]
+    in_street_name[idx]   <- m[hit, 5L]
+    fast[idx] <- TRUE
+  }
+  cand <- cand[!hit]
+
   # 4b: flat-type prefix ("UNIT 3 ...")
   m <- stringi::stri_match_first_regex(bst[cand], ft_re)
   hit <- !is.na(m[, 1L])
@@ -842,7 +929,7 @@ address_parse <- function(addresses, normalize = TRUE) {
   remaining <- which(valid & !fast & (has_st | has_boundary | forced_type_less))
   embedded_re <- paste0(
     "^(.+?)\\s+(", ft_alt,
-    ")\\s+(\\d+[A-Z]?)\\s+(\\d+[A-Z]?(?:-\\d+[A-Z]?)?)\\s+(.+)$"
+    ")\\s+(\\d+[A-Z]?(?:-\\d+[A-Z]?)?)\\s+(\\d+[A-Z]?(?:-\\d+[A-Z]?)?)\\s+(.+)$"
   )
   embedded_m <- stringi::stri_match_first_regex(bst[remaining], embedded_re)
   embedded_hit <- !is.na(embedded_m[, 1L])
@@ -873,14 +960,25 @@ address_parse <- function(addresses, normalize = TRUE) {
   type_less_fast <- fast & forced_type_less & !has_boundary
   if (any(type_less_fast)) {
     idx <- which(type_less_fast)
+    # The first-word/rest split below is only valid when a real house number
+    # was already consumed upstream (e.g. "190 MUSGRAVE RED HILL"). A bare,
+    # number-less locality (e.g. "FLINDERS VIEW") has no street portion at
+    # all, so the whole remaining text belongs in in_locality, not split.
+    has_number <- !is.na(in_number_first[idx])
     split <- stringi::stri_match_first_regex(
       in_street_name[idx], "^(\\S+)\\s+(.+)$"
     )
-    take <- !is.na(split[, 1L]) & split[, 2L] != "THE"
+    take <- has_number & !is.na(split[, 1L]) & split[, 2L] != "THE"
     if (any(take)) {
       out_idx <- idx[take]
       in_street_name[out_idx] <- split[take, 2L]
       in_locality[out_idx] <- split[take, 3L]
+    }
+    no_number <- which(!has_number & !is.na(in_street_name[idx]))
+    if (length(no_number) > 0L) {
+      out_idx <- idx[no_number]
+      in_locality[out_idx] <- in_street_name[out_idx]
+      in_street_name[out_idx] <- NA_character_
     }
   }
 
@@ -1150,7 +1248,10 @@ address_parse <- function(addresses, normalize = TRUE) {
 .parse_implied_pairs <- function(text, ft_map, ft_alt) {
   # Choose the rightmost pair so digits in a building name remain in that
   # name. The final street-name section must start with a nonnumeric token.
-  pattern <- "^(.*)\\b(\\d+[A-Z]?)\\s+(\\d+[A-Z]?(?:-\\d+[A-Z]?)?)\\s+(\\D.*)$"
+  # (?<!-) excludes starting the flat-number capture right after an embedded
+  # hyphen (e.g. picking "19" out of "1-19"), forcing the match to the true
+  # start of the range so the optional hyphen-extension absorbs it whole.
+  pattern <- "^(.*)\\b(?<!-)(\\d+[A-Z]?(?:-\\d+[A-Z]?)?)\\s+(\\d+[A-Z]?(?:-\\d+[A-Z]?)?)\\s+(\\D.*)$"
   parts <- stringi::stri_match_first_regex(text, pattern)
   rows <- which(!is.na(parts[, 1L]))
   if (length(rows) == 0L) return(data.table(row = integer()))
@@ -1236,6 +1337,26 @@ address_parse <- function(addresses, normalize = TRUE) {
     return(out)
   }
 
+  # Case A-alt: number+letter slash suffix ("40/B") -- a bare letter after
+  # the slash with no digits is a street-number alpha suffix, not a unit
+  # split; equivalent to "40B" written with a slash. Tried only when Case A's
+  # digit/digit pattern above didn't match anywhere in the string.
+  m_nl <- regexpr("\\b(\\d+)/([A-Z])\\b", s, perl = TRUE)
+  if (m_nl > 0L) {
+    nl_end <- m_nl + attr(m_nl, "match.length") - 1L
+    nl_str <- substr(s, m_nl, nl_end)
+    if (m_nl > 1L) {
+      bld <- trimws(substr(s, 1L, m_nl - 1L))
+      if (nzchar(bld)) out$building_name <- bld
+    }
+    parts <- strsplit(nl_str, "/", fixed = TRUE)[[1L]]
+    out$number_first  <- as.integer(parts[1L])
+    out$number_suffix <- parts[2L]
+    out$street_name <- trimws(substr(s, nl_end + 1L, nchar(s)))
+    if (!nzchar(out$street_name)) out$street_name <- NA_character_
+    return(out)
+  }
+
   # Case A2: attached single-letter flat prefix — "F8 536 STREETNAME" (F=Flat,
   # A=Apartment, U=Unit, other letters default to Unit). The letter is
   # immediately followed by the flat number with NO space, then the normal
@@ -1275,7 +1396,7 @@ address_parse <- function(addresses, normalize = TRUE) {
   # "U6019 ..." — possibly preceded by a building name and/or the street
   # number (e.g. "6 Unit 6019 Parkland Bvd" or "5 Blind Road Unit 6019 6
   # Parkland Bvd"). Whichever marker sits closest to the street name wins.
-  ft_alt_re <- paste0("\\b(", ft_alt, ")\\s+(\\d+[A-Z]?)\\b")
+  ft_alt_re <- paste0("\\b(", ft_alt, ")\\s+(\\d+[A-Z]?(?:-\\d+[A-Z]?)?)\\b")
   ft_alt_m  <- regexpr(ft_alt_re, s, perl = TRUE)
   u_re <- "\\bU(\\d+)\\b"
   u_m  <- regexpr(u_re, s, perl = TRUE)

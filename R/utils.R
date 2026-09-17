@@ -106,7 +106,7 @@
       st_regex = paste0("\\b(", paste(regex_escape(st_keys), collapse = "|"), ")\\b"),
       ft_map = ft_map,
       ft_alt = ft_alt,
-      ft_re = paste0("^(", ft_alt, ")\\s+(\\d+[A-Z]?)\\s+"),
+      ft_re = paste0("^(", ft_alt, ")\\s+(\\d+[A-Z]?(?:-\\d+[A-Z]?)?)\\s+"),
       level_map = level_map,
       level_alt = level_alt
     )

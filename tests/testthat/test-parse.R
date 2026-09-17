@@ -606,3 +606,132 @@ test_that("abbreviated street directions preserve the street and locality bounda
   expect_equal(out$in_street_suffix, c("N", "STH", NA_character_))
   expect_equal(out$in_locality, c("SYDNEY", "SYDNEY", "NORTH SYDNEY"))
 })
+
+# ---- Bare "U" unit marker + two-number convention --------------------------
+
+test_that("bare U marker followed by unit and street numbers parses both", {
+  r <- address_parse("U 20, 25 Smith Street, Cannonvale QLD 4802")
+  expect_equal(r$in_flat_type,    "UNIT")
+  expect_equal(r$in_flat_number,  "20")
+  expect_equal(r$in_number_first, 25L)
+  expect_equal(r$in_street_name,  "SMITH")
+})
+
+# ---- Hyphen-range flat numbers ----------------------------------------------
+
+test_that("hyphenated unit range with a bare marker parses as one flat_number", {
+  r <- address_parse("UNIT 1-19 25 Illawong Street, Cannonvale QLD 4802")
+  expect_equal(r$in_flat_number,  "1-19")
+  expect_equal(r$in_number_first, 25L)
+  expect_equal(r$in_street_name,  "ILLAWONG")
+})
+
+test_that("hyphenated unit range with a building name prefix is preserved", {
+  r <- address_parse("My Building Name Unit 1-19 25 Illawong Street, Cannonvale QLD 4802")
+  expect_equal(r$in_building_name, "MY BUILDING NAME")
+  expect_equal(r$in_flat_number,   "1-19")
+  expect_equal(r$in_number_first,  25L)
+})
+
+test_that("hyphenated unit range with no separate street number uses marker-only case", {
+  r <- address_parse("Unit 1-19 Smith Street, Brisbane QLD 4000")
+  expect_equal(r$in_flat_number,  "1-19")
+  expect_equal(r$in_street_name,  "SMITH")
+  expect_true(is.na(r$in_number_first))
+})
+
+test_that("hyphenated flat range and hyphenated street range both parse independently", {
+  r <- address_parse("Unit 1-19 24-26 Illawong Street, Cannonvale QLD 4802")
+  expect_equal(r$in_flat_number,  "1-19")
+  expect_equal(r$in_number_first, 24L)
+  expect_equal(r$in_number_last,  26L)
+})
+
+# ---- Number + letter slash suffix ("40/B") ----------------------------------
+
+test_that("number/letter slash notation parses as a street-number suffix, not a unit", {
+  r <- address_parse("40/B Smith Street, Brisbane QLD 4000")
+  expect_true(is.na(r$in_flat_type))
+  expect_equal(r$in_number_first,  40L)
+  expect_equal(r$in_number_suffix, "B")
+  expect_equal(r$in_street_name,   "SMITH")
+})
+
+test_that("digit/digit slash notation still takes priority over the number+letter pattern", {
+  r <- address_parse("3/25 Saint James Ct, Tamborine Mountain QLD 4272")
+  expect_equal(r$in_flat_type,    "UNIT")
+  expect_equal(r$in_flat_number,  "3")
+  expect_equal(r$in_number_first, 25L)
+})
+
+# ---- VIEW/MILE/RING/END locality-collision words ----------------------------
+
+test_that("VIEW as a locality word is not split off as a street type", {
+  r <- address_parse("10 Station Street, Flinders View QLD 4305")
+  expect_equal(r$in_street_type, "STREET")
+  expect_equal(r$in_locality,    "FLINDERS VIEW")
+})
+
+test_that("MILE as a locality word is not split off as a street type", {
+  r <- address_parse("5 Main Road, Eight Mile Plains QLD 4113")
+  expect_equal(r$in_street_type, "ROAD")
+  expect_equal(r$in_locality,    "EIGHT MILE PLAINS")
+})
+
+test_that("RING as a locality word is not split off as a street type", {
+  r <- address_parse("20 Oxley Avenue, Kippa-Ring QLD 4021")
+  expect_equal(r$in_street_type, "AVENUE")
+  expect_equal(r$in_locality,    "KIPPA-RING")
+})
+
+test_that("END as a locality word is not split off as a street type", {
+  r <- address_parse("15 Mollison Street, West End QLD 4101")
+  expect_equal(r$in_street_name, "MOLLISON")
+  expect_equal(r$in_street_type, "STREET")
+  expect_equal(r$in_locality,    "WEST END")
+})
+
+test_that("a bare, house-number-less locality made of collision words is not split at all", {
+  r <- address_parse("Flinders View QLD 4305")
+  expect_true(is.na(r$in_street_type))
+  expect_equal(r$in_locality, "FLINDERS VIEW")
+})
+
+# ---- Leading postcode/state order -------------------------------------------
+
+test_that("leading postcode-then-state order resolves to locality with no street portion", {
+  r <- address_parse("4012 QLD Nundah")
+  expect_equal(r$in_postcode, 4012L)
+  expect_equal(r$in_state,    "QLD")
+  expect_equal(r$in_locality, "NUNDAH")
+  expect_true(is.na(r$in_street_name))
+})
+
+test_that("leading postcode/state before a real street address still parses the street", {
+  r <- address_parse("4000 QLD 12 Smith Street")
+  expect_equal(r$in_postcode,     4000L)
+  expect_equal(r$in_number_first, 12L)
+  expect_equal(r$in_street_name,  "SMITH")
+})
+
+# ---- Multi-word building names ending in a plural marker --------------------
+
+test_that("a plural dwelling word at the end of a multi-word building name is preserved", {
+  r <- address_parse("Park View Apartments 3 12 Smith Street, Brisbane QLD 4000")
+  expect_equal(r$in_building_name, "PARK VIEW APARTMENTS")
+  expect_equal(r$in_flat_number,   "3")
+  expect_equal(r$in_number_first,  12L)
+})
+
+test_that("a bare plural dwelling marker with nothing before it is still typo-corrected", {
+  r <- address_parse("Units 3 24 Illawong Street, Cannonvale QLD 4802")
+  expect_equal(r$in_flat_type,   "UNIT")
+  expect_true(is.na(r$in_building_name))
+})
+
+# ---- Malformed multibyte input must not abort the batch ---------------------
+
+test_that("invalid multibyte input in a locality-collision row does not crash the batch", {
+  bad <- paste0("110 Musgrave Rd Red Hill 4059 ", rawToChar(as.raw(0xFF)))
+  expect_error(address_parse(c(bad, "10 Smith St, Brisbane QLD 4000")), NA)
+})
