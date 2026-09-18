@@ -58,7 +58,10 @@ test_that("split number joins retain the same candidates and component scores", 
     "15 Main Road, Brisbane QLD 4000", "20-10 Main Road, Brisbane QLD 4000",
     "10-10 Main Road, Brisbane QLD 4000", "10A Main Road, Brisbane QLD 4000",
     "Lot 7 Main Road, Brisbane QLD 4000", "Main Road, Brisbane QLD 4000",
-    "0 Main Road, Brisbane QLD 4000", "10 Main Road, Brisbane QLD"
+    "0 Main Road, Brisbane QLD 4000", "10 Main Road, Brisbane QLD",
+    "Lot 7 12 Main Road, Brisbane QLD 4000",
+    "Lot 7 10-20 Main Road, Brisbane QLD 4000",
+    "Lot 7 10A Main Road, Brisbane QLD 4000"
   ))
   duckdb::duckdb_register(con, "branch_inputs", inputs)
   for (join in c("g.postcode = i.in_postcode", "g.state = i.in_state")) {

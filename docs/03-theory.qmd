@@ -285,10 +285,14 @@ Both input and candidate ranges are treated as inclusive intervals:
 | Partial overlap | `10–20` → `18–25` | 30% |
 | Disjoint intervals or missing input number | `10–20` → `30` | 0% |
 
-An explicit lot identifier takes precedence and requires agreement after removing
-numeric zero padding (`007` equals `7`, and `007A` equals `7A`). Alphabetic suffixes
-and compound identifiers remain significant; `7A` does not equal `7B`. Candidate
-lot filtering uses the same normalisation as scoring.
+An explicit street number takes precedence over a lot in both retrieval and
+number scoring. A lot identifier is used only when the input has no street
+number, and requires agreement after removing numeric zero padding (`007`
+equals `7`, and `007A` equals `7A`). Alphabetic suffixes and compound identifiers
+remain significant; `7A` does not equal `7B`. Candidate lot filtering uses the
+same normalisation as scoring. A `LOT 7` label cannot supply a fallback street
+number of `7`. `gnaf_match_features()` checks lot conflicts independently even
+when a street number is present; a high agreement score is not a probability.
 The first point in a larger candidate range receives containment credit, rather
 than an exact score. Ranges do not imply odd/even parity, and matching returns
 existing records without creating synthetic addresses.

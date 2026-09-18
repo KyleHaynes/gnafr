@@ -89,17 +89,22 @@
 # do not store number suffixes separately. Anchor against the candidate's own
 # street spelling, including when the input street has a typo.
 .candidate_number_token_sql <- function(g = "g") {
+  label <- sprintf("UPPER(%s.address_label)", g)
+  # A lot-only label must never supply a fallback house number. Keep the
+  # inexpensive path for the usual labels without LOT.
+  label <- sprintf(paste0("CASE WHEN STRPOS(%1$s, 'LOT ') > 0 THEN ",
+    "REGEXP_REPLACE(%1$s, '\\bLOT +[0-9]+[A-Z]?(-[0-9]+[A-Z]?)?\\b', '', 'g') ",
+    "ELSE %1$s END"), label)
   fallback <- sprintf(paste0(
-    "REGEXP_EXTRACT(UPPER(%s.address_label), ",
+    "REGEXP_EXTRACT(%s, ",
     "'(^|[ /])([0-9]+[A-Z]?(-[0-9]+[A-Z]?)?) +' || ",
     "REGEXP_ESCAPE(UPPER(TRIM(%s.street_name))) || '( |,|$)', 2)"
-  ), g, g)
+  ), label, g)
   # A per-row regex containing the street name is expensive to compile for
   # every candidate pair. Locate its first occurrence literally, then extract
   # the preceding number with a constant pattern. Only accept a complete street
   # token and a valid number; repeated street names in building prefixes and
   # other unusual layouts still use the original search.
-  label <- sprintf("UPPER(%s.address_label)", g)
   street <- sprintf("UPPER(TRIM(%s.street_name))", g)
   position <- sprintf("STRPOS(%s, ' ' || %s)", label, street)
   token <- sprintf(paste0(
@@ -116,17 +121,21 @@
 
 .candidate_number_token <- function(pairs) {
   street <- .pair_column(pairs, "street_name")
-  label <- .pair_column(pairs, "address_label")
+  label <- toupper(.pair_column(pairs, "address_label"))
+  lot <- which(grepl("LOT ", label, fixed = TRUE))
+  label[lot] <- gsub("\\bLOT +[0-9]+[A-Z]?(-[0-9]+[A-Z]?)?\\b", "", label[lot], perl = TRUE)
   pattern <- paste0(
     "(^|[ /])([0-9]+[A-Z]?(-[0-9]+[A-Z]?)?) +\\Q",
     toupper(trimws(street)), "\\E( |,|$)"
   )
-  found <- stringi::stri_match_first_regex(toupper(label), pattern)[, 3L]
+  found <- stringi::stri_match_first_regex(label, pattern)[, 3L]
   found[is.na(street) | !nzchar(trimws(street))] <- NA_character_
   found
 }
 
 .score_number_sql <- function(weight, i, g) {
+  # A lot is not a street number and may repeat along a street. Only use it
+  # as the locating identifier when no street number was supplied.
   token <- .candidate_number_token_sql(g)
   g_first <- sprintf("COALESCE(%s.number_first, TRY_CAST(REGEXP_EXTRACT(%s, '^[0-9]+') AS INTEGER))", g, token)
   i_first <- paste0(i, ".in_number_first")
@@ -154,10 +163,10 @@
     " WHEN %1$s = '' OR %2$s = '' THEN 0.5 ELSE 0.0 END"
   ), i_suffix, g_suffix)
   sprintf(paste0(
-    "CAST(ROUND_EVEN(%g * (CASE WHEN %s != '' THEN ",
+    "CAST(ROUND_EVEN(%g * (CASE WHEN %s IS NULL AND %s != '' THEN ",
     "CASE WHEN %s = %s THEN 1.0 ELSE 0.0 END ",
     "ELSE (%s) * (%s) END), 0) AS INTEGER)"
-  ), weight, i_lot, i_lot, g_lot, interval, suffix)
+  ), weight, i_first, i_lot, i_lot, g_lot, interval, suffix)
 }
 
 .score_number <- function(pairs, weight) {
@@ -186,7 +195,7 @@
   i_lot <- .score_identifier_value(.pair_column(pairs, "in_lot_number"))
   g_lot <- .score_identifier_value(.pair_column(pairs, "lot_number"))
   as.integer(round(weight * data.table::fifelse(
-    i_lot != "", as.numeric(i_lot == g_lot), interval * suffix
+    is.na(i_first) & i_lot != "", as.numeric(i_lot == g_lot), interval * suffix
   )))
 }
 

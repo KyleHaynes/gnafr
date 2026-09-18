@@ -49,6 +49,19 @@ test_that("gnaf_text_scores appends the four similarity columns", {
   expect_error(gnaf_text_scores(data.table::data.table(a = 1)), "missing columns")
 })
 
+test_that("text scores distinguish raw text from reconstructed parsed input", {
+  x <- threshold_results()
+  before <- data.table::copy(x)
+  raw <- gnaf_text_scores(x)
+  standardised <- gnaf_text_scores(x, input = "standardised")
+  expect_lt(raw$levenshtein_score[1L], 100)
+  expect_equal(standardised$levenshtein_score[1L], 100)
+  expect_identical(x, before)
+  expect_error(gnaf_text_scores(x, input = "unknown"), "arg")
+  x[, input_raw := c(NA_character_, "", " ", NA_character_, "none")]
+  expect_true(all(is.na(gnaf_text_scores(x)$text_similarity)))
+})
+
 test_that("text scores compare the original match when a linked address is returned", {
   x <- threshold_results()
   original <- gnaf_text_scores(x)

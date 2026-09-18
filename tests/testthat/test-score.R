@@ -245,11 +245,14 @@ test_that("flat/level type synonym maps agree between R and DuckDB", {
   expect_equal(sql_scored$score_flat, r_scored$score_flat)
 })
 
-test_that("explicit lot number replaces street number scoring", {
+test_that("a matching lot cannot override a conflicting explicit street number", {
   p <- make_pair(
     "ROAD", "ROAD", in_number_first = 99L, number_first = 10L,
     in_lot_number = "7", lot_number = "7"
   )
+  expect_equal(gnafr:::.score_pairs(p)$score_number, 0L)
+  expect_lt(p$total_score, 100L)
+  p[, in_number_first := NA_integer_]
   expect_equal(gnafr:::.score_pairs(p)$score_number, 10L)
   p[, lot_number := "8"]
   expect_equal(gnafr:::.score_pairs(p)$score_number, 0L)
@@ -555,7 +558,8 @@ test_that("zero-padded identifiers agree without confusing different units or lo
     in_flat_number = c("003", "003A", "003A", "003", "A003", "000"),
     flat_number = c("3", "3A", "3B", "30", "A3", "0"))
   expect_identical(gnafr:::.score_pairs(pairs)$score_flat, c(5L, 5L, 0L, 0L, 0L, 5L))
-  lots <- make_pair("ROAD", "ROAD", in_lot_number = c("007", "007A", "007A"),
+  lots <- make_pair("ROAD", "ROAD", in_number_first = NA_integer_,
+                    in_lot_number = c("007", "007A", "007A"),
                     lot_number = c("7", "7A", "7B"))
   expect_identical(gnafr:::.score_pairs(lots)$score_number, c(10L, 10L, 0L))
   levels <- make_pair("ROAD", "ROAD", in_level_number = "003", level_number = "3")

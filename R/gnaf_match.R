@@ -95,6 +95,10 @@
 #'   contained by the input earns 50%, and partial overlap earns 30%. Number
 #'   suffixes are checked immediately before the candidate street in its label,
 #'   including labels with unit, level or building prefixes.
+#'   An explicit street number takes precedence over a lot number in both
+#'   candidate retrieval and number scoring. Lots are used for this purpose only
+#'   when the input has no street number. Use [gnaf_match_features()] to inspect
+#'   lot agreement separately, alongside other conflicts and missing evidence.
 #'
 #'   Street directions qualify the street-type score: agreement keeps full
 #'   credit, a missing direction halves it, and conflicting directions score
@@ -728,12 +732,12 @@ gnaf_match <- function(addresses, con, max_results = 1L, min_score = 60L,
 .number_prefilter_sql <- function() {
   paste(
     "(",
-    sprintf("  (i.in_lot_number IS NOT NULL AND %s = %s)",
+    sprintf("  (i.in_number_first IS NULL AND i.in_lot_number IS NOT NULL AND %s = %s)",
       .score_identifier_value_sql("g.lot_number"),
       .score_identifier_value_sql("i.in_lot_number")),
-    "  OR (i.in_lot_number IS NULL AND (",
-    "    i.in_number_first IS NULL",
-    "    OR g.number_first = i.in_number_first",
+    "  OR (i.in_number_first IS NULL AND i.in_lot_number IS NULL)",
+    "  OR (i.in_number_first IS NOT NULL AND (",
+    "    g.number_first = i.in_number_first",
     "    OR (g.number_first <= COALESCE(i.in_number_last, i.in_number_first)",
     "        AND i.in_number_first <= COALESCE(g.number_last, g.number_first))",
     "    OR (g.number_first IS NULL AND i.in_number_suffix IS NOT NULL",
@@ -805,31 +809,31 @@ gnaf_match <- function(addresses, con, max_results = 1L, min_score = 60L,
     )
     paste(c(
       branch(paste(
-        "i.in_lot_number IS NOT NULL",
+        "i.in_number_first IS NULL AND i.in_lot_number IS NOT NULL",
         sprintf("AND %s = %s", .score_identifier_value_sql("g.lot_number"),
           .score_identifier_value_sql("i.in_lot_number"))
       )),
       branch(paste(
-        "i.in_lot_number IS NULL AND i.in_number_first IS NOT NULL",
+        "i.in_number_first IS NOT NULL",
         "AND g.number_first = i.in_number_first"
       )),
       # Ordinary inputs only overlap a different start number when the
       # candidate has a range. This lets DuckDB filter those rows before joining.
       branch(paste(
-        "i.in_lot_number IS NULL AND i.in_number_first IS NOT NULL",
+        "i.in_number_first IS NOT NULL",
         "AND i.in_number_last IS NULL AND g.number_last IS NOT NULL",
         "AND g.number_first < i.in_number_first",
         "AND i.in_number_first <= g.number_last"
       )),
       branch(paste(
-        "i.in_lot_number IS NULL AND i.in_number_first IS NOT NULL",
+        "i.in_number_first IS NOT NULL",
         "AND i.in_number_last IS NOT NULL",
         "AND g.number_first != i.in_number_first",
         "AND g.number_first <= COALESCE(i.in_number_last, i.in_number_first)",
         "AND i.in_number_first <= COALESCE(g.number_last, g.number_first)"
       )),
       branch(paste(
-        "i.in_lot_number IS NULL AND i.in_number_first IS NOT NULL",
+        "i.in_number_first IS NOT NULL",
         "AND i.in_number_suffix IS NOT NULL AND g.number_first IS NULL",
         sprintf("AND %s = CAST(i.in_number_first AS VARCHAR) || i.in_number_suffix",
                 .candidate_number_token_sql())

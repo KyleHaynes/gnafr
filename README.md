@@ -8,7 +8,7 @@ Fast, fuzzy Australian address matching against the [Geocoded National Address F
 
 - **Bulk matching** — 100k+ addresses in a single call
 - **Fuzzy matching** — handles abbreviations, typos, missing fields, and messy real-world strings
-- **Confidence scoring** — transparent 0–100 score with per-component breakdown
+- **Agreement scoring** — transparent 0–100 score with per-component breakdown
 - **Custom addresses** — add your own records and match them alongside G-NAF
 
 Full documentation: <https://kylehaynes.github.io/gnafr>
@@ -120,9 +120,18 @@ Key arguments:
 
 Matching details and review findings are in [MATCHING_REVIEW.md](reports/MATCHING_REVIEW.md).
 Scores measure component agreement, rather than a probability of correctness.
+Even 100 is not proof of a correct or unique match. When both a lot and street
+number are supplied, the street number controls candidate retrieval and number
+scoring; the lot is used for these only when the street number is absent.
 Use `max_results > 1` to inspect alternatives. Principal/primary options follow
 stored PID relationships after ranking and preserve the original address in
 `matched_*` columns; they do not depend on the fallback threshold.
+
+Use `gnaf_match_features(results)` to inspect separate number, lot, unit, level,
+state and street-direction conflicts, missing evidence, both text comparisons,
+and ties among returned candidates. The [scoring overhaul workflow](reports/SCORING_OVERHAUL.md)
+provides a logistic baseline and validation process for verified historical data.
+No probability model is fitted or enabled by default.
 
 ### Saved geographies
 
@@ -172,6 +181,11 @@ gnaf_threshold_filter(results)
 The text similarity columns come from `gnaf_text_scores()`; when a threshold on
 one of them is active the printed code wraps the result in that call
 (`gnaf_text_scores(results)[... & jarowinkler_score >= 85]`) so it runs as-is.
+The default compares **raw input after basic text normalisation** with the
+matched label; it does not expand `RD` to `ROAD`. Use
+`gnaf_text_scores(results, input = "standardised")` for reconstructed parsed
+input. Whole-address text scores are diagnostics calculated after matching and
+do not affect the current ranking.
 
 For large results (hundreds of thousands of rows), the window opens immediately
 and a progress bar shows while `gnaf_text_scores()` runs in the background,
@@ -223,15 +237,16 @@ Custom addresses are stored in the same DuckDB file as GNAF data and persist acr
 best <- results[match_rank == 1]
 ```
 
-### Filtering by confidence
+### Reviewing agreement and conflicts
 
 ```r
-# Only high-confidence matches for automated processing
-high_conf <- results[match_rank == 1 & total_score >= 80]
-
-# Flag low-confidence for manual review
-results[, needs_review := total_score < 60]
+# Inspect structural conflicts and ties, even when total_score is high.
+evidence <- gnaf_match_features(results)
+review <- evidence[has_identifier_conflict == TRUE | tied_best == TRUE]
 ```
+
+This review filter is not an automatic acceptance rule. Determine acceptance
+thresholds from independently verified data, with a held-out test set.
 
 ### Identifying unmatched inputs
 
@@ -353,7 +368,7 @@ Other things worth ruling out on a machine that crashes:
 |---|---|
 | Connect & setup | `gnaf_connect()`, `gnaf_disconnect()`, `gnaf_init()`, `gnaf_status()`, `sample_gnaf()` |
 | Load G-NAF | `gnaf_build_db()`, `gnaf_load_psv()` (Standard), `gnaf_load()` (Core CSV) |
-| Match | `gnaf_match()`, `gnaf_text_scores()` |
+| Match | `gnaf_match()`, `gnaf_text_scores()`, `gnaf_match_features()` |
 | Parse | `address_parse()` |
 | Custom addresses | `gnaf_add()`, `gnaf_remove_custom()` |
 | Maintenance | `gnaf_canonicalize_street_types()`, `gnaf_build_street_aliases()`, `gnaf_rebuild_locality_index()` |

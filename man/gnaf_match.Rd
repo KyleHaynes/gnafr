@@ -159,6 +159,10 @@ Street numbers compare both range endpoints: exact intervals earn
   contained by the input earns 50%, and partial overlap earns 30%. Number
   suffixes are checked immediately before the candidate street in its label,
   including labels with unit, level or building prefixes.
+  An explicit street number takes precedence over a lot number in both
+  candidate retrieval and number scoring. Lots are used for this purpose only
+  when the input has no street number. Use [gnaf_match_features()] to inspect
+  lot agreement separately, alongside other conflicts and missing evidence.
 
   Street directions qualify the street-type score: agreement keeps full
   credit, a missing direction halves it, and conflicting directions score

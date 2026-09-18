@@ -22,7 +22,8 @@
 # canonical street types / numeric identifiers change component scores.
 # v13: locality boundaries and unit/slash-suffix parsing change components even
 # when the standardised cache key is unchanged (UNIT 3 40/B becomes UNIT 3 40B).
-.CACHE_ALGORITHM_VERSION <- 13L
+# v14: explicit street numbers take precedence over lots in retrieval/scoring.
+.CACHE_ALGORITHM_VERSION <- 14L
 
 #' Show the current state of the match cache
 #'

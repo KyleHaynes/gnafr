@@ -1,3 +1,16 @@
+# gnafr 0.0.3
+
+## Matching and scoring
+
+- Prefer explicit street numbers over lots in retrieval and scoring, and prevent
+  lot-only labels from supplying a fallback house number. Ignore older cache entries.
+- Add `gnaf_match_features()` for separate identifier conflicts, missing evidence,
+  unweighted component agreement, both text comparisons and returned-candidate ties.
+- Allow `gnaf_text_scores(input = "standardised")`; the default remains normalised
+  raw input. Neither text comparison participates in the current ranking.
+- Add a development workflow for logistic calibration against verified labels,
+  with separate validation and test groups. No learned model is enabled by default.
+
 # gnafr 0.0.2
 
 ## Address parsing
