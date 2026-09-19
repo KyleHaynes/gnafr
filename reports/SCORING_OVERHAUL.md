@@ -71,7 +71,7 @@ coordinates, and earlier geocoding may itself be wrong. Decide whether the targe
 is an exact address, principal address, or building/primary address, then label
 consistently. Keep unverified cases out of the fitting and accuracy denominators.
 
-Split repeated addresses, households and related student records together before
+Split repeated addresses, households and related records together before
 fitting. Prefer a later-period test set where feasible. All alternatives for an
 input belong in the same split. Keep the real frequency of incorrect matches;
 balancing the classes changes the probability target unless sampling is accounted
