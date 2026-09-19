@@ -71,7 +71,9 @@
 
 .score_identifier_value_sql <- function(x) {
   x <- .score_value_sql(x)
-  sprintf("REGEXP_REPLACE(%s, '^0+([0-9]+[A-Z]?)$', '\\1')", x)
+  # Zero-padding is uncommon; blank and ordinary identifiers need no regex.
+  sprintf(paste0("CASE WHEN LEFT(%1$s, 1) = '0' THEN ",
+    "REGEXP_REPLACE(%1$s, '^0+([0-9]+[A-Z]?)$', '\\1') ELSE %1$s END"), x)
 }
 
 .score_postcode <- function(input, candidate, weight) {

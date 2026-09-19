@@ -1,5 +1,11 @@
 # gnafr 0.0.3
 
+## Address parsing
+
+- Recognise a state/territory written as its full name (`QUEENSLAND`) or, next
+  to a postcode, a bare initial (`Q`), instead of absorbing it into the
+  locality. `NSW`/`NT` share the initial `N`, so neither gets a bare-letter form.
+
 ## Matching and scoring
 
 - Prefer explicit street numbers over lots in retrieval and scoring, and prevent

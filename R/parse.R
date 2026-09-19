@@ -2,6 +2,24 @@
 # letter defaults to UNIT at the use sites.
 .ATT_FLAT_MAP <- c(U = "UNIT", F = "FLAT", A = "APARTMENT")
 
+# Ways to write a state/territory beyond its GNAF abbreviation, seen in free-
+# form input immediately around a postcode (e.g. "RED HILL Q 4000", "RED HILL
+# QUEENSLAND 4000"). Every value is the canonical abbreviation to resolve to.
+.STATE_FULL_NAMES <- c(
+  QUEENSLAND = "QLD", "NEW SOUTH WALES" = "NSW", VICTORIA = "VIC",
+  "SOUTH AUSTRALIA" = "SA", "WESTERN AUSTRALIA" = "WA", TASMANIA = "TAS",
+  "NORTHERN TERRITORY" = "NT", "AUSTRALIAN CAPITAL TERRITORY" = "ACT"
+)
+# A bare letter also spells a real unit/flat suffix ("... UNIT A"), so it's
+# only trusted immediately next to a postcode, never standing alone at the
+# end of an address on its own - see .extract_geo_components(). NSW and NT
+# would both want "N" as their letter, so neither gets one.
+.STATE_LETTERS <- c(Q = "QLD", V = "VIC", S = "SA", W = "WA", T = "TAS", A = "ACT")
+
+.state_alternation <- function(tokens) {
+  paste0("(?:", paste(tokens[order(-nchar(tokens))], collapse = "|"), ")")
+}
+
 # Street-type dictionary words that are also common locality-name words (e.g.
 # "Red HILL", "Bushland PARK"). When one of these is the rightmost apparent
 # street-type match, it is frequently the suburb rather than the real street
@@ -233,13 +251,19 @@ address_parse <- function(addresses, normalize = TRUE) {
   state <- rep(NA_character_, length(x))
   postcode <- rep(NA_integer_, length(x))
   leading <- rep(FALSE, length(x))
-  states <- "(?:QLD|NSW|VIC|SA|WA|TAS|NT|ACT)"
+  abbrevs <- c("QLD", "NSW", "VIC", "SA", "WA", "TAS", "NT", "ACT")
+  state_map <- c(stats::setNames(abbrevs, abbrevs), .STATE_FULL_NAMES, .STATE_LETTERS)
+  # Single letters are only offered next to a required postcode (see
+  # .STATE_LETTERS); a bare trailing state with no postcode sticks to full
+  # words and abbreviations so a unit/flat letter can't be mistaken for one.
+  states <- .state_alternation(names(state_map))
+  states_standalone <- .state_alternation(c(abbrevs, names(.STATE_FULL_NAMES)))
   sep <- "[\\s,]+"
   x <- stringi::stri_replace_all_regex(x, "^[\\s,]+|[\\s,]+$", "")
   patterns <- c(
     paste0("(?:^|", sep, ")(", states, ")", sep, "(\\d{4})$"),
     paste0("(?:^|", sep, ")(\\d{4})", sep, "(", states, ")$"),
-    paste0("(?:^|", sep, ")(", states, ")$"),
+    paste0("(?:^|", sep, ")(", states_standalone, ")$"),
     paste0("(?:^|", sep, ")(\\d{4})$")
   )
   remaining <- which(!is.na(x) & nzchar(x))
@@ -249,7 +273,7 @@ address_parse <- function(addresses, normalize = TRUE) {
     rows <- remaining[hit]
     if (length(rows) > 0L) {
       if (j %in% c(1L, 2L, 3L)) {
-        state[rows] <- parts[hit, if (j == 2L) 3L else 2L]
+        state[rows] <- unname(state_map[parts[hit, if (j == 2L) 3L else 2L]])
       }
       if (j %in% c(1L, 2L, 4L)) {
         postcode[rows] <- as.integer(parts[hit, if (j == 1L) 3L else 2L])
@@ -269,7 +293,7 @@ address_parse <- function(addresses, normalize = TRUE) {
     hit <- !is.na(parts[, 1L])
     rows <- rows[hit]
     if (length(rows) > 0L) {
-      state[rows] <- parts[hit, if (j == 1L) 2L else 3L]
+      state[rows] <- unname(state_map[parts[hit, if (j == 1L) 2L else 3L]])
       postcode[rows] <- as.integer(parts[hit, if (j == 1L) 3L else 2L])
       leading[rows] <- TRUE
       x[rows] <- stringi::stri_replace_first_regex(x[rows], patterns[[j]], "")

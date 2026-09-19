@@ -735,3 +735,10 @@ test_that("invalid multibyte input in a locality-collision row does not crash th
   bad <- paste0("110 Musgrave Rd Red Hill 4059 ", rawToChar(as.raw(0xFF)))
   expect_error(address_parse(c(bad, "10 Smith St, Brisbane QLD 4000")), NA)
 })
+
+
+# ---- States ------------------------------------------------------------------
+test_that("States", {
+  test <- c("110 Musgrave Rd Red Hill Q 4059", "110 Musgrave Red Hill QUEENSLAND 4059", "10 Musgrave, Red Hill QUEENSLAND 4059")
+  expect_true(all(address_parse(c(test))[]$in_state == "QLD"))
+})

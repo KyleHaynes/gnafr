@@ -76,8 +76,15 @@
   # repeated SQL expressions small without changing the dictionary.
   map <- map[names(map) != unname(map)]
   if (!length(map)) return(value)
-  paste("CASE", value, paste(sprintf("WHEN '%s' THEN '%s'", names(map), map), collapse = " "),
-        "ELSE", value, "END")
+  # Most stored and parsed types are already canonical. A constant IN set
+  # avoids walking hundreds of abbreviation CASE arms for every candidate.
+  unchanged <- setdiff(unique(unname(map)), names(map))
+  mapped <- paste("CASE", value,
+    paste(sprintf("WHEN '%s' THEN '%s'", names(map), map), collapse = " "),
+    "ELSE", value, "END")
+  if (!length(unchanged)) return(mapped)
+  sprintf("CASE WHEN %s IN (%s) THEN %s ELSE %s END", value,
+    paste(sprintf("'%s'", unchanged), collapse = ", "), value, mapped)
 }
 
 .pair_column <- function(pairs, name, default = NA_character_) {
@@ -113,10 +120,15 @@
   ), label, position)
   boundary <- sprintf("SUBSTR(%s, %s + 1 + LENGTH(%s), 1)",
                       label, position, street)
-  sprintf(paste0(
+  extracted <- sprintf(paste0(
     "CASE WHEN %s > 0 AND %s IN ('', ' ', ',') AND %s != '' ",
     "THEN %s ELSE %s END"
   ), position, boundary, token, token, fallback)
+  # Street-only aliases dominate the missing-number branch. They cannot have
+  # a number token if their label has no digit; avoid compiling a street-specific
+  # fallback regex for each one. Preserve NULL-street behaviour.
+  sprintf(paste0("CASE WHEN %s.street_name IS NOT NULL AND ",
+    "NOT REGEXP_MATCHES(%s.address_label, '[0-9]') THEN '' ELSE %s END"), g, g, extracted)
 }
 
 .candidate_number_token <- function(pairs) {
@@ -142,7 +154,11 @@
   i_end <- sprintf("COALESCE(%s.in_number_last, %s)", i, i_first)
   g_end <- sprintf("COALESCE(%s.number_last, %s)", g, g_first)
   i_suffix <- .score_value_sql(paste0(i, ".in_number_suffix"))
-  g_suffix <- sprintf("COALESCE(REGEXP_EXTRACT(%s, '^[0-9]+([A-Z]?)', 1), '')", token)
+  # With a stored numeric number, most candidates only need suffix evidence.
+  # No digit immediately followed by a letter means a suffix is impossible,
+  # so full token extraction is unnecessary (including labels that are NULL).
+  g_suffix <- sprintf(paste0("CASE WHEN REGEXP_MATCHES(UPPER(%s.address_label), '[0-9][A-Z]') ",
+    "THEN COALESCE(REGEXP_EXTRACT(%s, '^[0-9]+([A-Z]?)', 1), '') ELSE '' END"), g, token)
   i_lot <- .score_identifier_value_sql(paste0(i, ".in_lot_number"))
   g_lot <- .score_identifier_value_sql(paste0(g, ".lot_number"))
   # Inclusive interval comparisons preserve exact ranges and also retrieve
