@@ -132,7 +132,7 @@ test_that("database spatial enrichment retains every PID and typed attributes", 
     "SELECT * FROM gnaf_addresses ORDER BY address_detail_pid"), before)
   expect_error(gnaf_add_spatial(con, lookup_shapes(), "SA2 demo's table"), "already exists")
   expect_setequal(DBI::dbListTables(con), c("gnaf_addresses", "custom_addresses",
-    "gnaf_locality_index", "gnaf_match_cache", "SA2 demo's table"))
+    "gnaf_locality_index", "gnaf_street_type_index", "gnaf_match_cache", "SA2 demo's table"))
   DBI::dbRemoveTable(con, "SA2 demo's table")
   expect_identical(DBI::dbGetQuery(con,
     "SELECT * FROM gnaf_addresses ORDER BY address_detail_pid"), before)

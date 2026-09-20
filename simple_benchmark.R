@@ -17,7 +17,7 @@ devtools::load_all(".", quiet = TRUE)
 # ---- 1. Build a fresh QLD-only database named "test" ------------------------
 
 gnaf_dir <- "C:/temp/gnaf/G-NAF/G-NAF MAY 2026/Standard"
-db_path  <- "C:/temp/test2.duckdb"   # the "test" database
+db_path  <- "C:/temp/test3b.duckdb"   # the "test" database
 
 if (!dir.exists(gnaf_dir)) {
   stop("G-NAF Standard directory not found: ", gnaf_dir)
@@ -42,11 +42,17 @@ simulated_inputs <- readRDS("simulated_inputs.rds")
 
 # ---- 3. Benchmark default gnaf_match() on the first 100,000 inputs ----------
 set.seed(1)
-inputs <- sample(simulated_inputs$simulated_address, 4000)
+inputs <- sample(simulated_inputs$simulated_address, 8000)
 
 timing <- system.time(
   result <- gnaf_match(inputs, con)   # all defaults (max_results = 1, min_score = 60, cache = TRUE)
 )
+
+gnaf_threshold_filter(result)
+
+result[input_id %in% c(5950, 2809, 14)]
+address_parse(result[input_id %in% c(5950, 2809, 14)]$input_raw)[]
+
 
 print(timing)
 cat("Rows returned:  ", nrow(result), "\n")

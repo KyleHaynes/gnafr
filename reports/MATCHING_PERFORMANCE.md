@@ -1,5 +1,25 @@
 # Matching performance investigation
 
+## Follow-up: default 50,000-input workload (18 September 2026)
+
+The seed-1 sample from `simulated_inputs.rds` was run against
+`C:/temp/test.duckdb`, with default matching settings except `cache = FALSE`.
+The controlled comparison in fresh R sessions took **393.30 seconds before and
+314.95 seconds after** the scoring shortcuts: 19.9% less elapsed time (1.25x
+throughput). All returned columns, values, types and row order were identical,
+including 49,837 matched inputs and 163 unmatched inputs. The original supplied
+575.43-second run was not used as the controlled baseline.
+
+The shortcuts avoid repeated abbreviation CASE evaluation for canonical types,
+number-token extraction for digitless labels, suffix extraction where no suffix
+can occur, and zero-padding regexes for identifiers that do not start with zero.
+Reproduce with `dev/benchmark_match_speed.R`; its environment variables are
+documented at the top of the script. These measurements precede the intentional
+parsing and reference-index changes made on 20 September, so they establish
+performance and result preservation for the scoring optimisations alone.
+
+## Earlier investigation
+
 13 September 2026. Workload: `simulated_inputs.rds`, rows `200000:300000`,
 `C:/temp/gnafx23.duckdb`, `max_results = 1L`, `min_score = 80L`, `cache = FALSE`.
 DuckDB 1.5.5 uses 16 threads and a 25 GiB memory limit on this machine.

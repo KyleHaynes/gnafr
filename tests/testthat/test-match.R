@@ -104,6 +104,45 @@ test_that("range and explicit lot blocking use the number score", {
   expect_equal(out$score_number, c(7L, 10L))
 })
 
+test_that("a GNAF row with a blank street_type scores against its backfilled name/type split", {
+  con <- gnaf_connect(":memory:")
+  on.exit(gnaf_disconnect(con), add = TRUE)
+  gnaf_init(con)
+  rows <- data.table(
+    address_detail_pid = c("CIRCUIT", "AVENUE"),
+    address_label = c(
+      "8807 THE POINT CIRCUIT, HOPE ISLAND QLD 4212",
+      "UNIT 3 221 THE AVENUE, PEREGIAN SPRINGS QLD 4573"
+    ),
+    number_first = c(8807L, 221L),
+    flat_type = c(NA_character_, "UNIT"),
+    flat_number = c(NA_character_, "3"),
+    street_name = c("THE POINT CIRCUIT", "THE AVENUE"),
+    street_type = NA_character_,
+    locality_name = c("HOPE ISLAND", "PEREGIAN SPRINGS"),
+    state = "QLD",
+    postcode = c(4212L, 4573L)
+  )
+  suppressMessages(gnaf_add(con, rows))
+  expect_equal(DBI::dbGetQuery(con,
+    "SELECT COUNT(*) AS n FROM gnaf_street_type_index")$n, 2)
+
+  out <- gnaf_match(c(
+    "8807 The Point Circuit, Hope Islad Qld 4212",
+    "UNIT 3 221 The Avene, Peregian Spings Qld 4573"
+  ), con, cache = FALSE, verbose = FALSE)
+  expect_equal(out$address_detail_pid, c("CIRCUIT", "AVENUE"))
+  # CIRCUIT has no typo in its street text, so it now scores an exact
+  # street-name/type match; AVENUE keeps one genuine typo ("Avene" for
+  # "Avenue") even after the fix, so it improves a lot (was 9/40) without
+  # reaching full marks - both are correctly matched either way.
+  expect_equal(out$score_street_name, c(40L, 34L))
+  expect_true(all(out$total_score >= 85L))
+  # Untouched: displayed street fields still reflect the raw stored data.
+  expect_equal(out$street_name, c("THE POINT CIRCUIT", "THE AVENUE"))
+  expect_true(all(is.na(out$street_type)))
+})
+
 test_that("matching signatures are deduplicated then fanned out", {
   con <- new_fixture_connection()
   on.exit(gnaf_disconnect(con), add = TRUE)

@@ -28,7 +28,7 @@
 .LOCALITY_COLLISION_WORDS <- c(
   "ST", "NORTH", "NTH", "SOUTH", "STH", "EAST", "WEST", "HILL",
   "HILLS", "HEIGHTS", "BAY", "BEACH", "ISLAND", "PARK", "POINT",
-  "PORT", "VALLEY", "VIEW", "MILE", "RING", "END",
+  "PORT", "VALLEY", "VIEW", "MILE", "RING", "END", "RIVER",
   "GLEN", "GROVE", "RISE", "VALE", "DALE", "WATERS", "WOOD"
 )
 
@@ -364,9 +364,15 @@ address_parse <- function(addresses, normalize = TRUE) {
     prefix <- fast.string::ftrimws(fast.string::fsubstr(
       base[exact], 1L, pmax(0L, loc[exact, 1L] - 1L)
     ))
-    sole_name <- fast.string::fgrepl(
-      "\\b\\d+[A-Z]?(?:-\\d+[A-Z]?)?$", prefix
-    ) |
+    # An empty prefix means the type word is the entire street name (e.g. a
+    # street literally named "Esplanade") - GNAF's own street_name can be
+    # exactly this when backfilling a missing street_type (see
+    # gnaf_rebuild_street_type_index()), a case the two original callers
+    # here never produce themselves.
+    sole_name <- !nzchar(prefix) |
+      fast.string::fgrepl(
+        "\\b\\d+[A-Z]?(?:-\\d+[A-Z]?)?$", prefix
+      ) |
       fast.string::fgrepl("\\bTHE$", prefix)
     type_less[idx[take_exact[sole_name]]] <- TRUE
     take <- take_exact[!sole_name]
@@ -383,9 +389,18 @@ address_parse <- function(addresses, normalize = TRUE) {
   if (length(unresolved) > 0L) {
     base_u <- base[unresolved]
     token <- stringi::stri_extract_last_regex(base_u, "[A-Z][A-Z-]*$")
-    type_less_name <- fast.string::fgrepl(
-      "^\\d+[A-Z]?(?:-\\d+[A-Z]?)?\\s+(?:THE\\s+)?[A-Z-]+$", base_u
-    )
+    # Mirror the exact-match branch's sole_name check above, using the text
+    # immediately before the fuzzy-matched token rather than requiring the
+    # *entire* remaining string to reduce to "number [THE] word" - the old,
+    # narrower check let a typo (e.g. "UNIT 3 221 THE AVENE") split into a
+    # fake name+type where the correctly-spelled version ("...THE AVENUE")
+    # would stay whole, an inconsistency purely from the typo itself.
+    prefix_u <- fast.string::ftrimws(stringi::stri_replace_last_regex(
+      base_u, "[A-Z][A-Z-]*$", ""
+    ))
+    type_less_name <- !nzchar(prefix_u) |
+      fast.string::fgrepl("\\b\\d+[A-Z]?(?:-\\d+[A-Z]?)?$", prefix_u) |
+      fast.string::fgrepl("\\bTHE$", prefix_u)
     can_fuzzy <- !is.na(token) & nchar(token) >= 3L & !type_less_name
     if (any(can_fuzzy)) {
       tokens <- unique(token[can_fuzzy])
@@ -627,8 +642,13 @@ address_parse <- function(addresses, normalize = TRUE) {
     prefix <- fast.string::ftrimws(fast.string::fsubstr(
       work[has_st], 1L, pmax(0L, st_pos[has_st] - 1L)
     ))
+    # Unanchored on both alternatives, matching the comma-boundary path's
+    # equivalent checks - a `^`-anchored bare-number check only recognised
+    # "5 ESPLANADE" as sole-name, not "UNIT 5 10 ESPLANADE" (prefix "UNIT 5
+    # 10"), so the leading flat marker made the parser misread the house
+    # number itself as the street name instead of leaving ESPLANADE whole.
     type_is_name <- fast.string::fgrepl(
-      "^\\d+[A-Z]?(?:-\\d+[A-Z]?)?$|\\b\\d+[A-Z]?(?:-\\d+[A-Z]?)?\\s+THE$",
+      "\\b\\d+[A-Z]?(?:-\\d+[A-Z]?)?$|\\b\\d+[A-Z]?(?:-\\d+[A-Z]?)?\\s+THE$",
       prefix
     )
     type_name_idx <- which(has_st)[type_is_name]

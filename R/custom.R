@@ -163,6 +163,32 @@ gnaf_add <- function(con, addresses, upsert = FALSE) {
     }
   }
 
+  if (n_changed > 0L && DBI::dbExistsTable(con, "gnaf_street_type_index")) {
+    if (upsert) {
+      # An update can flip street_type between NULL and non-NULL.
+      gnaf_rebuild_street_type_index(con)
+    } else {
+      new_names <- DBI::dbGetQuery(con, "
+        SELECT DISTINCT i.street_name
+        FROM __gnafr_insert__ i
+        WHERE i.street_type IS NULL AND i.street_name IS NOT NULL
+          AND NOT EXISTS (
+            SELECT 1 FROM gnaf_street_type_index s WHERE s.street_name = i.street_name
+          )
+      ")$street_name
+      if (length(new_names) > 0L) {
+        idx <- .backfill_street_type_rows(new_names)
+        duckdb::duckdb_register(con, "__gnafr_sti_new__", idx, overwrite = TRUE)
+        on.exit(try(duckdb::duckdb_unregister(con, "__gnafr_sti_new__"), silent = TRUE), add = TRUE)
+        DBI::dbExecute(con, "
+          INSERT INTO gnaf_street_type_index
+          SELECT street_name, effective_name, effective_type FROM __gnafr_sti_new__
+          ON CONFLICT DO NOTHING
+        ")
+      }
+    }
+  }
+
   n_after <- DBI::dbGetQuery(con, "SELECT COUNT(*) AS n FROM custom_addresses")$n
   if (n_changed > 0L) .invalidate_match_cache(con)
   DBI::dbCommit(con)
@@ -195,6 +221,7 @@ gnaf_remove_custom <- function(con, pids) {
   ")
   if (n > 0L) {
     gnaf_rebuild_locality_index(con)
+    if (DBI::dbExistsTable(con, "gnaf_street_type_index")) gnaf_rebuild_street_type_index(con)
     .invalidate_match_cache(con)
   }
   DBI::dbCommit(con)

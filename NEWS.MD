@@ -2,12 +2,47 @@
 
 ## Address parsing
 
+- Keep `RIVER HEADS` and `LITTLE RIVER` together as localities when an earlier
+  street type establishes the boundary, while retaining genuine `RIVER` types.
+- With locality fallback enabled, recover a missing locality from a unique
+  multi-word tail within one edit of a reference locality in the supplied
+  postcode/state. Preserve the input spelling for scoring and reject ambiguous
+  recoveries. This fixes `89 THE ESPLANADE S LUCIA QLD 4067` without treating
+  `S LUCIA` as an exact match to `ST LUCIA`. Older match-cache entries are ignored.
 - Recognise a state/territory written as its full name (`QUEENSLAND`) or, next
   to a postcode, a bare initial (`Q`), instead of absorbing it into the
   locality. `NSW`/`NT` share the initial `N`, so neither gets a bare-letter form.
+- Fix an inconsistency where a typo inside a flat/unit/building prefix (e.g.
+  `"UNIT 3 221 The Avene"`) could split a whole-name street like "The Avenue"
+  into a fake name + type, something the correctly-spelled address never did.
+  Fix a related bug where the same kind of prefix, without a comma, could
+  make the parser read the house number itself as the street name (e.g.
+  `"UNIT 5 10 Esplanade"`).
 
 ## Matching and scoring
 
+- Some real GNAF records have a blank street type, with any type word baked
+  into the street name instead (e.g. `street_name = "THE POINT CIRCUIT"`,
+  `street_type = NULL`) - about 0.9% of rows in a full GNAF load. Scoring now
+  compares these against a backfilled name/type split (new
+  `gnaf_street_type_index`, built by `gnaf_load`/`gnaf_load_psv`/`gnaf_add`
+  and rebuildable via `gnaf_rebuild_street_type_index()`) instead of the raw,
+  type-inclusive street name, fixing an otherwise-correct match scoring well
+  below its true quality. Bumps the match-cache algorithm version, so old
+  cached scores for these rows are no longer served. **Existing databases
+  need one explicit `gnaf_init(con)` call after upgrading** to create and
+  backfill the new index - `gnaf_match()` does not call it automatically.
+ - Add a compact `gnaf_street_type_index` and an accompanying
+   `gnaf_rebuild_street_type_index()` convenience function to derive a
+   best-effort `(effective_name, effective_type)` split for `street_name`
+   values whose `street_type` is missing. Both the SQL bulk path and the R
+   scoring code overlay this backfilled split so blank-type rows compare
+   like-for-like with parsed input. The index is created and backfilled by
+   `gnaf_init()` when needed; `gnaf_add()` updates the index for new custom
+   rows and `gnaf_remove_custom()` triggers a rebuild when rows are removed.
+ - Bump the match-cache algorithm (now v16) to reflect the street-type and
+   locality-recovery changes; previously cached matches for affected rows are
+   invalidated.
 - Prefer explicit street numbers over lots in retrieval and scoring, and prevent
   lot-only labels from supplying a fallback house number. Ignore older cache entries.
 - Add `gnaf_match_features()` for separate identifier conflicts, missing evidence,
@@ -16,6 +51,18 @@
   raw input. Neither text comparison participates in the current ranking.
 - Add a development workflow for logistic calibration against verified labels,
   with separate validation and test groups. No learned model is enabled by default.
+- Short-circuit the common DuckDB scoring cases so unchanged values skip
+  expensive work: already-canonical street types use a constant `IN` set instead
+  of walking every abbreviation CASE arm, digitless street-only alias labels skip
+  the street-specific number-token regex, suffixes are only extracted when a
+  digit-letter sequence is present, and zero-padding stripping only runs its
+  regex on values starting with `0`. Returned candidates and scores are unchanged.
+
+## Documentation and validation
+
+- Add `dev/benchmark_match_speed.R` and `simple_benchmark.R` to reproduce
+  end-to-end `gnaf_match()` timings, including optional DuckDB SQL profiles and
+  baseline comparison for the scoring speed-ups above.
 
 # gnafr 0.0.2
 

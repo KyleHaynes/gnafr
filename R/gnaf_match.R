@@ -787,9 +787,24 @@ gnaf_match <- function(addresses, con, max_results = 1L, min_score = 60L,
     "(%s) + (%s) + %g >= %d",
     exprs$score_postcode, exprs$score_street_name, other_max, min_score
   )
+  # Some GNAF rows have a blank street_type with any type word embedded in
+  # street_name instead (e.g. "THE POINT CIRCUIT" with street_type NULL -
+  # see gnaf_rebuild_street_type_index()). Score those rows against the
+  # backfilled split so they compare like with like against parsed input;
+  # every other row is unaffected. Falls back to the raw columns on a
+  # database that hasn't had gnaf_init() re-run since upgrading.
+  has_sti <- DBI::dbExistsTable(con, "gnaf_street_type_index")
+  sti_join <- if (has_sti) {
+    "LEFT JOIN gnaf_street_type_index sti ON g.street_type IS NULL AND sti.street_name = g.street_name"
+  } else ""
+  eff_name_expr <- if (has_sti) "COALESCE(sti.effective_name, g.street_name)" else "g.street_name"
+  eff_type_expr <- if (has_sti) "COALESCE(sti.effective_type, g.street_type)" else "g.street_type"
   raw_projection <- sprintf("SELECT
     g.address_detail_pid, g.address_label,
-    g.postcode, g.locality_name, g.street_name, g.street_type, g.street_suffix,
+    g.postcode, g.locality_name,
+    %s AS street_name,
+    %s AS street_type,
+    g.street_suffix,
     g.number_first, g.number_last, g.lot_number,
     g.flat_type, g.flat_number, g.level_type, g.level_number,
     i.input_id,
@@ -798,14 +813,16 @@ gnaf_match <- function(addresses, con, max_results = 1L, min_score = 60L,
     i.in_flat_type, i.in_flat_number, i.in_level_type, i.in_level_number,
     %s AS suburb_similarity,
     %s AS street_similarity",
+    eff_name_expr, eff_type_expr,
     .name_similarity_sql("i.in_locality", "g.locality_name"),
-    .name_similarity_sql("i.in_street_name", "g.street_name"))
+    .name_similarity_sql("i.in_street_name", eff_name_expr))
   candidate_sql <- if (split_number) {
     branch <- function(predicate) sprintf(
       "%s
        FROM %s g JOIN %s i ON (%s) AND (%s)
+       %s
        WHERE %s",
-      raw_projection, gnaf_tbl, inputs_tbl, join_clause, predicate, pre_filter
+      raw_projection, gnaf_tbl, inputs_tbl, join_clause, predicate, sti_join, pre_filter
     )
     paste(c(
       branch(paste(
@@ -846,8 +863,9 @@ gnaf_match <- function(addresses, con, max_results = 1L, min_score = 60L,
     sprintf(
       "%s
        FROM %s g JOIN %s i ON %s
+       %s
        WHERE %s",
-      raw_projection, gnaf_tbl, inputs_tbl, join_clause, pre_filter
+      raw_projection, gnaf_tbl, inputs_tbl, join_clause, sti_join, pre_filter
     )
   }
 
@@ -1094,6 +1112,10 @@ WHERE r.match_rank <= %d
 # same function the comma-hint path already uses - so the fix is: treat the
 # newly-found boundary exactly like a comma would have been treated. Modifies
 # `parsed` in place; does nothing to rows that already have a locality.
+# If exact recovery fails, a unique multi-word suffix within one edit of a
+# locality in the supplied postcode/state can establish the boundary. Keep
+# the input spelling so the scorer still sees the typo, rather than awarding
+# full agreement simply because the reference helped locate the boundary.
 .recover_missing_locality <- function(con, parsed) {
   candidates <- parsed[
     is.na(in_locality) & !is.na(in_street_name) & !is.na(in_postcode),
@@ -1137,6 +1159,48 @@ WHERE r.match_rank <= %d
     matched_rows <- match(hits$row, idx)
     best_locality[idx[matched_rows]] <- suffix[matched_rows]
     best_prefix[idx[matched_rows]] <- prefix[matched_rows]
+  }
+
+  # Batch only unresolved multi-word tails. Requiring a unique locality AND
+  # boundary avoids guessing between multiple plausible splits. A lone THE
+  # cannot supply a street name after removing the putative locality.
+  fuzzy_checks <- lapply(3:2, function(k) {
+    idx <- which(is.na(best_locality) & n_words > k)
+    if (length(idx) == 0L) return(NULL)
+    data.table(
+      row = idx, postcode = candidates$in_postcode[idx],
+      state = candidates$in_state[idx],
+      suffix = vapply(words[idx], function(w) paste(utils::tail(w, k), collapse = " "), character(1L)),
+      prefix = vapply(words[idx], function(w) paste(utils::head(w, length(w) - k), collapse = " "), character(1L))
+    )
+  })
+  fuzzy_checks <- rbindlist(fuzzy_checks)
+  if (nrow(fuzzy_checks) > 0L) {
+    fuzzy_checks <- fuzzy_checks[nchar(suffix) >= 5L & prefix != "THE"]
+  }
+  if (nrow(fuzzy_checks) > 0L) {
+    duckdb::duckdb_register(con, "__gnafr_locrecover__", fuzzy_checks, overwrite = TRUE)
+    hits <- tryCatch(
+      setDT(DBI::dbGetQuery(con, "
+        SELECT c.row, MIN(c.suffix) AS suffix, MIN(c.prefix) AS prefix
+        FROM __gnafr_locrecover__ c
+        JOIN gnaf_locality_index l
+          ON l.postcode = c.postcode
+         AND (c.state IS NULL OR l.state = c.state)
+        WHERE ABS(LENGTH(l.locality_name) - LENGTH(c.suffix)) <= 1
+          AND LENGTH(l.locality_name) - LENGTH(REPLACE(l.locality_name, ' ', ''))
+            = LENGTH(c.suffix) - LENGTH(REPLACE(c.suffix, ' ', ''))
+          AND levenshtein(l.locality_name, c.suffix) = 1
+        GROUP BY c.row
+        HAVING COUNT(DISTINCT l.locality_name) = 1
+           AND COUNT(DISTINCT c.suffix) = 1
+      ")),
+      finally = try(duckdb::duckdb_unregister(con, "__gnafr_locrecover__"), silent = TRUE)
+    )
+    if (nrow(hits) > 0L) {
+      best_locality[hits$row] <- hits$suffix
+      best_prefix[hits$row] <- hits$prefix
+    }
   }
 
   recovered <- which(!is.na(best_locality))
@@ -1587,6 +1651,19 @@ WHERE r.match_rank <= %d
   joined <- cands[pi, on = "lbl_key", nomatch = 0L, allow.cartesian = TRUE]
   joined[, lbl_key := NULL]
   if (nrow(joined) == 0L) return(NULL)
+
+  # Overlay the backfilled name/type split for rows whose street_type is
+  # blank (see gnaf_rebuild_street_type_index()), matching the SQL bulk
+  # path's use of the same index, so this fast path scores consistently.
+  if (anyNA(joined$street_type) && DBI::dbExistsTable(con, "gnaf_street_type_index")) {
+    sti <- setDT(DBI::dbGetQuery(con,
+      "SELECT street_name, effective_name, effective_type FROM gnaf_street_type_index"))
+    if (nrow(sti) > 0L) {
+      joined[sti, on = "street_name",
+        `:=`(street_name = fifelse(is.na(street_type), i.effective_name, street_name),
+             street_type = fifelse(is.na(street_type), i.effective_type, street_type))]
+    }
+  }
 
   joined <- .score_pairs(joined, weights = weights)
   joined <- joined[total_score >= min_score]

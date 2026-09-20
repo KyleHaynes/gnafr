@@ -98,8 +98,11 @@ gnaf_load <- function(con, path, overwrite = FALSE) {
   message("Total GNAF addresses in database: ", format(n, big.mark = ","))
   message("Rebuilding locality index ...")
   gnaf_rebuild_locality_index(con)
+  message("Rebuilding street-type index ...")
+  gnaf_rebuild_street_type_index(con)
   DBI::dbExecute(con, "ANALYZE gnaf_addresses")
   DBI::dbExecute(con, "ANALYZE gnaf_locality_index")
+  DBI::dbExecute(con, "ANALYZE gnaf_street_type_index")
   .invalidate_match_cache(con)
   DBI::dbCommit(con)
   committed <- TRUE

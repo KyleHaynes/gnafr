@@ -104,3 +104,27 @@ test_that("initialising a legacy schema restores address fields and versions its
     "SELECT algorithm_version FROM gnaf_match_cache")$algorithm_version, 1L)
   expect_no_error(gnaf_init(con))
 })
+
+test_that("gnaf_init creates an empty street-type index on a fresh database", {
+  con <- gnaf_connect(":memory:")
+  on.exit(gnaf_disconnect(con), add = TRUE)
+  gnaf_init(con)
+  expect_true(DBI::dbExistsTable(con, "gnaf_street_type_index"))
+  expect_equal(DBI::dbGetQuery(con, "SELECT COUNT(*) AS n FROM gnaf_street_type_index")$n, 0)
+})
+
+test_that("gnaf_init backfills the street-type index for pre-existing null-type rows", {
+  con <- gnaf_connect(":memory:")
+  on.exit(gnaf_disconnect(con), add = TRUE)
+  gnaf_init(con)
+  DBI::dbExecute(con, "INSERT INTO gnaf_addresses
+    (address_detail_pid, source, street_name, street_type, locality_name, state, postcode)
+    VALUES ('A', 'gnaf', 'THE POINT CIRCUIT', NULL, 'HOPE ISLAND', 'QLD', 4212)")
+  # Simulate a database initialised before this feature existed: the table
+  # exists (created by an earlier gnaf_init() in this same test) but is empty.
+  gnaf_init(con)
+  idx <- DBI::dbGetQuery(con, "SELECT * FROM gnaf_street_type_index")
+  expect_equal(idx$street_name, "THE POINT CIRCUIT")
+  expect_equal(idx$effective_name, "THE POINT")
+  expect_equal(idx$effective_type, "CIRCUIT")
+})

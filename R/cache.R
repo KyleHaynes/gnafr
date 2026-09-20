@@ -23,7 +23,14 @@
 # v13: locality boundaries and unit/slash-suffix parsing change components even
 # when the standardised cache key is unchanged (UNIT 3 40/B becomes UNIT 3 40B).
 # v14: explicit street numbers take precedence over lots in retrieval/scoring.
-.CACHE_ALGORITHM_VERSION <- 14L
+# v15: GNAF rows whose street_type is blank now score against a backfilled
+# name/type split (gnaf_street_type_index) instead of the raw, type-inclusive
+# street_name; a typo inside a flat/unit/building prefix no longer forces an
+# inconsistent street-name/type split that the correctly-spelled address
+# wouldn't get - previously-cached scores for these rows are stale.
+# v16: recover RIVER locality boundaries and unique misspelt locality tails
+# using the reference postcode/state, retaining the spelling penalty.
+.CACHE_ALGORITHM_VERSION <- 16L
 
 #' Show the current state of the match cache
 #'

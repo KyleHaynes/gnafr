@@ -566,6 +566,42 @@ test_that("type-like sole street names and lot building prefixes stay structural
   expect_equal(r$in_building_name, c("GOLDEN BEACH RESORT", NA_character_, "ARABY"))
 })
 
+test_that("a typo inside a flat/unit prefix doesn't split a whole-name street", {
+  # A typo of "AVENUE" used to fuzzy-match and split off as a type, unlike
+  # the correctly-spelled version above ("Unit 2206 194 The Avenue") which
+  # already stayed whole - the split should not depend on the typo itself.
+  r <- address_parse("UNIT 3 221 The Avene, Peregian Spings Qld 4573")
+  expect_equal(r$in_street_name, "THE AVENE")
+  expect_true(is.na(r$in_street_type))
+  expect_equal(r$in_number_first, 221L)
+})
+
+test_that("ordinary fuzzy type correction still fires with a real name prefix", {
+  r <- address_parse("110 Smith Avene, Brisbane Qld 4000")
+  expect_equal(r$in_street_name, "SMITH")
+  expect_equal(r$in_street_type, "AVENUE")
+})
+
+test_that("a flat/unit prefix doesn't make a type-only street name eat the house number", {
+  # Without a comma, "UNIT 5 10 ESPLANADE" used to leave "10" as the parsed
+  # street name and NA the house number, because the guard that keeps a
+  # sole type-word street ("10 ESPLANADE" -> street "ESPLANADE") only
+  # recognised a *leading* bare number, not one preceded by a flat marker.
+  r <- address_parse("UNIT 5 10 Esplanade Broadbeach Qld 4218")
+  expect_equal(r$in_number_first, 10L)
+  expect_equal(r$in_street_name, "ESPLANADE")
+  expect_true(is.na(r$in_street_type))
+})
+
+test_that(".resolve_boundary_street_types splits isolated street text only with a genuine leftover name", {
+  resources <- gnafr:::.get_parser_resources()
+  names <- c("THE POINT CIRCUIT", "THE AVENUE", "THE ESPLANADE", "ESPLANADE",
+             "BROADWAY", "PARADE", "KEY", "SUNSET POINT", "HIGH STREET")
+  res <- gnafr:::.resolve_boundary_street_types(names, rep(TRUE, length(names)), resources)
+  expect_equal(res$canonical,
+    c("CIRCUIT", NA, NA, NA, NA, NA, NA, "POINT", "STREET"))
+})
+
 test_that("official GNAF street types are recognised exactly", {
   r <- address_parse(c(
     "1 Coral Cove, Red Hill QLD 4059",

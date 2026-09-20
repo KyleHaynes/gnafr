@@ -29,6 +29,23 @@ test_that("CSV imports preserve string identifiers and ISO dates in quoted paths
   expect_equal(row$date_created, as.Date("2017-07-27"))
 })
 
+test_that("gnaf_load backfills a street-type split for rows with a blank street_type", {
+  con <- gnaf_connect(":memory:")
+  on.exit(gnaf_disconnect(con), add = TRUE)
+  gnaf_init(con)
+  row <- core_csv_row()
+  row[, `:=`(STREET_NAME = "THE POINT CIRCUIT", STREET_TYPE = NA_character_)]
+  path <- tempfile(fileext = ".csv")
+  on.exit(unlink(path), add = TRUE)
+  data.table::fwrite(row, path)
+  expect_equal(suppressMessages(gnaf_load(con, path)), 1)
+  idx <- DBI::dbGetQuery(con, "SELECT * FROM gnaf_street_type_index")
+  expect_equal(nrow(idx), 1L)
+  expect_equal(idx$street_name, "THE POINT CIRCUIT")
+  expect_equal(idx$effective_name, "THE POINT")
+  expect_equal(idx$effective_type, "CIRCUIT")
+})
+
 test_that("failed multi-file CSV replacement retains addresses, index and cache", {
   con <- gnaf_connect(":memory:")
   on.exit(gnaf_disconnect(con), add = TRUE)

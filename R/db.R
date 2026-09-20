@@ -179,6 +179,28 @@ gnaf_init <- function(con) {
   n_idx  <- DBI::dbGetQuery(con, "SELECT COUNT(*) AS n FROM gnaf_locality_index")$n
   if (n_addr > 0L && n_idx == 0L) gnaf_rebuild_locality_index(con)
 
+  # Some real GNAF records have a blank STREET_TYPE_CODE, so the type word
+  # (if any) sits inside street_name instead (e.g. "THE POINT CIRCUIT" with
+  # street_type NULL). This index backfills a best-effort (name, type) split
+  # for those rows only, reusing the same boundary logic address_parse()
+  # applies to user input, so scoring compares like with like.
+  DBI::dbExecute(con, "
+    CREATE TABLE IF NOT EXISTS gnaf_street_type_index (
+      street_name    VARCHAR PRIMARY KEY,
+      effective_name VARCHAR NOT NULL,
+      effective_type VARCHAR
+    )
+  ")
+
+  # Migration: backfill the street-type index if null-type street names exist
+  # but the index is empty (databases loaded, or initialised, before this
+  # feature was added).
+  n_null_types <- DBI::dbGetQuery(con,
+    "SELECT COUNT(*) AS n FROM gnaf_addresses WHERE street_type IS NULL")$n
+  n_sti <- DBI::dbGetQuery(con,
+    "SELECT COUNT(*) AS n FROM gnaf_street_type_index")$n
+  if (n_null_types > 0L && n_sti == 0L) gnaf_rebuild_street_type_index(con)
+
   # Match cache
   DBI::dbExecute(con, "
     CREATE TABLE IF NOT EXISTS gnaf_match_cache (
@@ -247,6 +269,67 @@ gnaf_rebuild_locality_index <- function(con) {
       ")
   }
   n <- DBI::dbGetQuery(con, "SELECT COUNT(*) AS n FROM gnaf_locality_index")$n
+  invisible(n)
+}
+
+# Given distinct raw street_name values (from rows whose street_type is
+# NULL), derive a best-effort (effective_name, effective_type) split using
+# the same boundary logic address_parse() applies to user input. Names with
+# no confident split keep their raw text as effective_name and a NA type.
+.backfill_street_type_rows <- function(names) {
+  resources <- .get_parser_resources()
+  resolved <- .resolve_boundary_street_types(names, rep(TRUE, length(names)), resources)
+  effective_name <- ifelse(
+    is.na(resolved$start), names,
+    fast.string::ftrimws(fast.string::fsubstr(names, 1L, resolved$start - 1L))
+  )
+  data.table::data.table(
+    street_name = names, effective_name = effective_name,
+    effective_type = resolved$canonical
+  )
+}
+
+#' Rebuild the street-type backfill index
+#'
+#' Rebuilds \code{gnaf_street_type_index} from the current contents of
+#' \code{gnaf_addresses} and \code{custom_addresses}. Some real GNAF records
+#' have a blank \code{STREET_TYPE_CODE}, leaving any type word inside
+#' \code{street_name} instead (e.g. \code{street_name = "THE POINT CIRCUIT"},
+#' \code{street_type = NA}). The index is a compact table of a best-effort
+#' \code{(effective_name, effective_type)} split for those \code{street_name}
+#' values only, so scoring can compare against the same name/type boundary
+#' \code{address_parse()} uses for input — without altering the stored
+#' \code{street_name}/\code{street_type} columns or displayed results.
+#'
+#' The index is rebuilt automatically by \code{gnaf_load}, \code{gnaf_load_psv},
+#' and \code{gnaf_add}. Call this manually after bulk deletions or after
+#' migrating a database created before this feature existed.
+#'
+#' @param con DBI connection from \code{gnaf_connect}.
+#' @return Invisibly, the number of rows now in the index.
+#' @export
+gnaf_rebuild_street_type_index <- function(con) {
+  DBI::dbExecute(con, "DELETE FROM gnaf_street_type_index")
+
+  tables <- "gnaf_addresses"
+  if (DBI::dbExistsTable(con, "custom_addresses")) tables <- c(tables, "custom_addresses")
+  names <- unique(unlist(lapply(tables, function(tbl) {
+    DBI::dbGetQuery(con, sprintf(
+      "SELECT DISTINCT street_name FROM %s WHERE street_type IS NULL AND street_name IS NOT NULL",
+      tbl
+    ))$street_name
+  })))
+  if (length(names) == 0L) return(invisible(0L))
+
+  idx <- .backfill_street_type_rows(names)
+  duckdb::duckdb_register(con, "__gnafr_sti__", idx, overwrite = TRUE)
+  on.exit(try(duckdb::duckdb_unregister(con, "__gnafr_sti__"), silent = TRUE))
+  DBI::dbExecute(con, "
+    INSERT INTO gnaf_street_type_index
+    SELECT street_name, effective_name, effective_type FROM __gnafr_sti__
+    ON CONFLICT DO NOTHING
+  ")
+  n <- DBI::dbGetQuery(con, "SELECT COUNT(*) AS n FROM gnaf_street_type_index")$n
   invisible(n)
 }
 

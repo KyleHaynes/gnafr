@@ -170,3 +170,44 @@ Run the workflow's isolated synthetic software checks from the repository root
 with `Rscript --vanilla dev/test_calibrate_match_scores.R`. These exercise
 prediction, split leakage checks, label validation and unmatched-input coverage;
 they do not measure real geocoding accuracy.
+
+## Reported locality boundaries (20 September 2026)
+
+The three supplied examples were checked against `C:/temp/test3a.duckdb`, opened
+read-only with match caching disabled. All returned the same PIDs as the supplied
+output; the improvements below reflect recovered address components.
+
+| Input | Supplied score | Updated score | Explanation |
+|---|---:|---:|---|
+| `1 ams way, marsden qld 4132` | 84 | 84 | Parsing was correct. `AMS` still differs from reference `SAMS`. |
+| `89 THE ESPLANADE S LUCIA QLD 4067` | 61 | 92 | Separate `THE ESPLANADE` from the locality; retain the `S LUCIA` typo penalty. |
+| `15 watermans way river heads qld 4655` | 65 | 100 | Parse street `WATERMANS`, type `WAY`, locality `RIVER HEADS`. |
+
+`address_parse()` recognises `RIVER` as a possible locality word and looks for
+an earlier street type. For the ambiguous Esplanade example, `gnaf_match()` uses
+the reference locality index after parsing, under `locality_fallback = TRUE`.
+Exact locality recovery takes precedence. Fuzzy recovery requires a unique
+multi-word locality and split within one character edit in the supplied
+postcode/state; an existing parsed locality is left alone. Recovery uses one
+additional batched query for unresolved tails, not a query per input.
+
+The recovered input locality remains `S LUCIA`, rather than being overwritten
+with `ST LUCIA`. Street agreement therefore improves without fabricating exact
+locality agreement. This change does not alter scoring weights or turn the
+heuristic score into a calibrated probability. Standalone `address_parse()`
+cannot make this reference-assisted recovery without a database connection.
+
+Regression coverage includes the supplied examples, unit prefixes, real RIVER
+street types, ambiguous locality candidates, postcode/state restrictions,
+exact-match precedence, and disabling locality fallback. Cache algorithm version
+16 prevents stale scores from being returned after upgrading.
+
+On the saved 50,000-input benchmark sample, the complete locality-recovery step
+took 0.16 and 0.22 seconds in two runs against the current database. The fuzzy
+pass found 37 additional boundaries beyond exact recovery. These timings include
+the existing exact recovery but exclude parsing and candidate scoring; they are
+not a new end-to-end speed benchmark or an accuracy estimate.
+
+Validation: the full `testthat::test_local()` suite completed without test
+failures. It reported two dependency warnings because the installed `shiny` and
+`data.table` packages were built under R 4.5.3 while the runner uses R 4.5.0.
