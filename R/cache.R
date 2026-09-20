@@ -30,7 +30,9 @@
 # wouldn't get - previously-cached scores for these rows are stale.
 # v16: recover RIVER locality boundaries and unique misspelt locality tails
 # using the reference postcode/state, retaining the spelling penalty.
-.CACHE_ALGORITHM_VERSION <- 16L
+# v17: locality recovery accepts adjacent letter swaps and ST remains the
+# street type after a name ending in a compass word, such as LITTLE WEST.
+.CACHE_ALGORITHM_VERSION <- 17L
 
 #' Show the current state of the match cache
 #'

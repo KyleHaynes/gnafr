@@ -2,6 +2,12 @@
 
 ## Address parsing
 
+- Recover missing locality boundaries for adjacent-letter swaps such as
+  `UBRLEIGH HEADS` and `SUFRERS PARADISE`, using a unique postcode/state
+  reference match and preserving the typed spelling for scoring.
+- Keep `ST` as the street type after a compass word in the name (e.g.
+  `LITTLE WEST ST WINSTON`), while continuing to recognise `ROAD ST LUCIA`.
+  Invalidate cached scores from the previous parsing rules.
 - Keep `RIVER HEADS` and `LITTLE RIVER` together as localities when an earlier
   street type establishes the boundary, while retaining genuine `RIVER` types.
 - With locality fallback enabled, recover a missing locality from a unique
