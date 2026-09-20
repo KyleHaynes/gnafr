@@ -31,7 +31,10 @@ test_that("reported matches recover boundaries without erasing spelling differen
   inputs <- c("1 ams way, marsden qld 4132",
               "89 THE ESPLANADE S LUCIA QLD 4067",
               "15 watermans way river heads qld 4655")
-  out <- gnaf_match(inputs, con, cache = FALSE, verbose = FALSE)
+  # These historical score expectations use the weights from that report.
+  weights <- list(postcode = 20L, suburb = 15L, street_name = 40L,
+                  street_type = 10L, number = 10L, flat = 5L)
+  out <- gnaf_match(inputs, con, weights = weights, cache = FALSE, verbose = FALSE)
   expect_identical(out$address_detail_pid, c("SAMS", "ESPLANADE", "WATERMANS"))
   expect_identical(out$input_raw, inputs)
   expect_identical(out$in_locality, c("MARSDEN", "S LUCIA", "RIVER HEADS"))
@@ -45,7 +48,7 @@ test_that("reported matches recover boundaries without erasing spelling differen
 
   # Reference-assisted recovery is optional and must respect the existing flag.
   disabled <- gnaf_match(inputs[2L], con, locality_fallback = FALSE,
-                         cache = FALSE, verbose = FALSE)
+                         weights = weights, cache = FALSE, verbose = FALSE)
   expect_true(is.na(disabled$in_locality))
 })
 

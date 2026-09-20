@@ -51,9 +51,15 @@
     between <- stringi::stri_trim_both(stringi::stri_sub(
       text[rows], previous[, 2L] + 1L, start[rows] - 1L
     ))
+    previous_raw <- stringi::stri_sub(prefix, previous[, 1L], previous[, 2L])
+    # A compass word immediately before ST commonly belongs to the street
+    # name (LITTLE WEST ST). Do not reinterpret it as the type and move ST
+    # into the locality. Earlier explicit types still resolve ROAD ST LUCIA.
+    direction_before_st <- raw[rows] == "ST" & !nzchar(between) &
+      previous_raw %in% c("NORTH", "NTH", "SOUTH", "STH", "EAST", "WEST")
     usable <- !is.na(previous[, 1L]) & !is.na(before) & nzchar(before) &
       !stringi::stri_detect_regex(before, "\\b\\d+[A-Z]?(?:-\\d+[A-Z]?)?(?:\\s+THE)?$") &
-      !stringi::stri_detect_regex(between, "[0-9]")
+      !stringi::stri_detect_regex(between, "[0-9]") & !direction_before_st
     unused <- rows[!usable]
     if (length(unused) > 0L) {
       # With no earlier type, a final locality word is ambiguous. Keep short

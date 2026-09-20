@@ -1116,6 +1116,8 @@ WHERE r.match_rank <= %d
 # locality in the supplied postcode/state can establish the boundary. Keep
 # the input spelling so the scorer still sees the typo, rather than awarding
 # full agreement simply because the reference helped locate the boundary.
+# Adjacent letter swaps count as one edit (UBRLEIGH -> BURLEIGH); ordinary
+# Levenshtein distance counts them as two and misses this common typing error.
 .recover_missing_locality <- function(con, parsed) {
   candidates <- parsed[
     is.na(in_locality) & !is.na(in_street_name) & !is.na(in_postcode),
@@ -1190,7 +1192,7 @@ WHERE r.match_rank <= %d
         WHERE ABS(LENGTH(l.locality_name) - LENGTH(c.suffix)) <= 1
           AND LENGTH(l.locality_name) - LENGTH(REPLACE(l.locality_name, ' ', ''))
             = LENGTH(c.suffix) - LENGTH(REPLACE(c.suffix, ' ', ''))
-          AND levenshtein(l.locality_name, c.suffix) = 1
+          AND damerau_levenshtein(l.locality_name, c.suffix) = 1
         GROUP BY c.row
         HAVING COUNT(DISTINCT l.locality_name) = 1
            AND COUNT(DISTINCT c.suffix) = 1

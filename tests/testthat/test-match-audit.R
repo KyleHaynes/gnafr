@@ -115,7 +115,7 @@ test_that("state matching does not repeat its search through locality fallback",
   })
   out <- gnaf_match("10 Main Road, Brisbane QLD", con, cache = FALSE, verbose = FALSE)
   expect_identical(out$address_detail_pid, "TARGET")
-  expect_identical(out$total_score, 80L)
+  expect_identical(out$total_score, 100L - .default_match_weights()$postcode)
 })
 
 test_that("a genuine strong match does not trigger the street-number-relaxed fallback", {

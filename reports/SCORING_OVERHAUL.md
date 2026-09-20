@@ -211,3 +211,47 @@ not a new end-to-end speed benchmark or an accuracy estimate.
 Validation: the full `testthat::test_local()` suite completed without test
 failures. It reported two dependency warnings because the installed `shiny` and
 `data.table` packages were built under R 4.5.3 while the runner uses R 4.5.0.
+
+## Follow-up: transposed localities and compass words before ST
+
+The next six reported examples reproduce with the current local weights:
+postcode 12, locality 12, street name 16, street type 10, number 30, and
+flat/level 20. These weights were retained during the comparison.
+
+| Input ID | Relevant input | Before | After |
+|---|---|---:|---:|
+| 971 | `THE ESPLANADE UBRLEIGH HEADS` | 73 | 94 |
+| 5766 | `7-77 THE STRA` | 76 | 76 |
+| 1602 | `LITTLE WEST ST WINSTON` | 78 | 100 |
+| 3653 | `OLD BURLEIGH RD SUFRERS PARADISE` | 73 | 99 |
+| 731 | `3745-379 PACIFIC HIGHWAY` | 70 | 70 |
+| 4647 | `517 COONOWRIN ROAD` | 70 | 70 |
+
+All six retained the same matched PIDs when checked against the read-only
+`C:/temp/test3a.duckdb` database with caching disabled. Locality recovery now
+uses Damerau-Levenshtein distance so an adjacent-letter swap counts as one
+typing error. It still requires a unique locality and boundary in the supplied
+postcode/state, preserves the input spelling, and honours `locality_fallback`.
+The parser also retains ST as the type after a compass word in the street name,
+without changing the earlier-type rule for addresses ending in `ROAD ST LUCIA`.
+
+The unchanged cases contain real number differences. `7-77` only partly agrees
+with the reference range `75-77`, and `THE STRA` differs from `THE STRAND`.
+`3745-379` is a reversed range, unlike `3745-3759`; `517` differs from `67`.
+The parser retains these values and the scorer retains the corresponding number
+penalties. High similarity across the rest of a long address does not establish
+that these identifiers agree.
+
+The shared street-type rule changed only the reported LITTLE WEST row in a
+50,000-input parse comparison. Street numbers, range endpoints, number suffixes,
+unit/level/lot identifiers and raw inputs were identical across that comparison.
+The complete locality-recovery step took 0.14 seconds for the batch. This is a
+stage timing, not a new end-to-end matching benchmark. Cache version 17 rejects
+scores produced under the earlier parsing rules.
+
+Validation for this follow-up: the new comma-recovery tests and existing parser,
+parser edge-case, locality-boundary, matching-audit and cache tests pass. The new
+six-case scoring fixture explicitly uses the reported weights. Historical score
+fixtures retain their original explicit weights, and the state-only matching
+assertion now accounts for the configured postcode weight. The full package
+suite was not rerun for this follow-up.
