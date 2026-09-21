@@ -62,7 +62,9 @@ aliases with no \code{principal_pid} (e.g. \code{street_only}). Default
 
 \item{locality_fallback}{If \code{TRUE} (default), re-searches by locality
 name for unmatched inputs and results below \code{fallback_threshold}
-whose locality component is weak.}
+whose locality component is weak. Also searches exact locality names across
+postcodes for otherwise exact addresses, independently of scores and
+\code{fallback_threshold}.}
 
 \item{street_number_fallback}{If \code{TRUE} (default), re-searches by
 street name (dropping the number-based candidate filter every other path
@@ -95,7 +97,9 @@ Weights must sum to 100.}
 \item{cache}{If \code{TRUE} (default), checks \code{gnaf_match_cache} for
 previously matched addresses and stores new high-confidence results. The
 one-result cache requires default weights, normalisation, candidate filters
-and fallback settings, and is bypassed when \code{max_results > 1}.}
+and fallback settings, and is bypassed when \code{max_results > 1}.
+Postcode-only corrections are not cached because their uniqueness must be
+established by a fresh search.}
 
 \item{cache_threshold}{Minimum score for a new result to be cached.
 Default 95.}
@@ -122,12 +126,15 @@ See \code{\link{gnaf_list_geographies}}, \code{\link{gnaf_add_geography}} and
 \code{\link{gnaf_join_geographies}}. Column-name collisions are errors.}
 }
 \value{
-A \code{data.table} ordered by \code{input_id} then descending
-  \code{total_score}. Includes a standardised input string for every row and
-  retains unmatched inputs with missing match columns.
+A \code{data.table} ordered by \code{input_id} then \code{match_rank}.
+  The \code{match_basis} column is \code{exact_components},
+  \code{postcode_only}, or \code{weighted}, and is \code{NA} for unmatched
+  inputs. Within each basis, candidates sort by descending \code{total_score}
+  then PID. Includes a standardised input string for every row and retains
+  unmatched inputs with missing match columns.
 }
 \description{
-Uses a five-path strategy:
+Uses an exact-identity search alongside five fuzzy retrieval paths:
 \enumerate{
   \item \strong{Postcode path} - primary, blocks on the parsed postcode.
   \item \strong{State path} - for inputs with no parseable postcode.
@@ -171,6 +178,20 @@ Street numbers compare both range endpoints: exact intervals earn
   identifiers earn half credit; conflicting identifiers earn none. UNIT,
   APARTMENT and FLAT are equivalent designators, as are LEVEL and FLOOR.
   These scores measure agreement; they are not calibrated probabilities.
+
+  Ranking first prefers exact component matches, then a unique otherwise
+  exact address with a different postcode, then weighted matches. The
+  postcode preference requires \code{locality_fallback = TRUE}. It requires
+  an exact, present street number (including both range endpoints), street
+  name and locality. State and street type must agree when supplied; number
+  suffixes, directions, units and levels must agree, including their presence
+  or absence. Supplied lot and building names must agree. Existing canonical
+  designators and numeric identifier normalisation apply.
+  Uniqueness is checked before \code{min_score} or \code{max_results} filters;
+  aliases of one principal share an identity, but secondary addresses remain
+  distinct. Ambiguous alternatives retain weighted ranking. Scores and
+  \code{min_score} retain their numerical meaning: a preferred candidate can
+  have a lower score than a later result, and cannot bypass the score cutoff.
   Candidate pruning uses the requested weights and minimum score: a street
   comparison is discarded only if its rounded score plus an upper bound on
   the other components cannot reach \code{min_score}. Postcode/state and

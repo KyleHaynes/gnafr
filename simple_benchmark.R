@@ -17,7 +17,7 @@ devtools::load_all(".", quiet = TRUE)
 # ---- 1. Build a fresh QLD-only database named "test" ------------------------
 
 gnaf_dir <- "C:/temp/gnaf/G-NAF/G-NAF MAY 2026/Standard"
-db_path  <- "C:/temp/test3b.duckdb"   # the "test" database
+db_path  <- "C:/temp/test3d.duckdb"   # the "test" database
 
 if (!dir.exists(gnaf_dir)) {
   stop("G-NAF Standard directory not found: ", gnaf_dir)
@@ -52,6 +52,9 @@ gnaf_threshold_filter(result)
 
 result[input_id %in% c(5950, 2809, 14)]
 address_parse(result[input_id %in% c(5950, 2809, 14)]$input_raw)[]
+
+
+gnaf_match(c("190 MUSGRAVE RD, RED HILL QLD 4059", "190 MUSGRAVE RD, RED HILL QLD 4000"), con = con)
 
 
 print(timing)

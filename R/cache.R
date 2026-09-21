@@ -32,7 +32,9 @@
 # using the reference postcode/state, retaining the spelling penalty.
 # v17: locality recovery accepts adjacent letter swaps and ST remains the
 # street type after a name ending in a compass word, such as LITTLE WEST.
-.CACHE_ALGORITHM_VERSION <- 17L
+# v18: exact component identity outranks weighted agreement; a unique address
+# can be recovered across postcodes independently of the locality score.
+.CACHE_ALGORITHM_VERSION <- 18L
 
 #' Show the current state of the match cache
 #'
@@ -355,6 +357,11 @@ gnaf_cache_sample <- function(con, n = 10L, cached_on = NULL,
   need <- c("match_rank", "total_score", "input_standardised",
             "address_detail_pid", score_cols)
   if (!all(need %in% names(result_dt))) return(invisible(NULL))
+
+  # Uniqueness must be established by a fresh cross-postcode search, rather
+  # than reconstructed from the single cached winner.
+  if ("match_basis" %in% names(result_dt))
+    result_dt <- result_dt[is.na(match_basis) | match_basis != "postcode_only"]
 
   to_cache <- result_dt[
     match_rank == 1L &
