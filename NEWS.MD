@@ -2,6 +2,11 @@
 
 ## Address parsing
 
+- Read a descending hyphenated pair after a flat marker as a unit and a street
+  number, so `U 6019-6 Parkland Bvd` parses as unit `6019`, number `6` instead
+  of a single `6019-6` unit range. Ascending or equal ranges (`Unit 1-19`) are
+  still unit ranges, and the pair is left alone when a separate street number
+  is also present.
 - Recover missing locality boundaries for adjacent-letter swaps such as
   `UBRLEIGH HEADS` and `SUFRERS PARADISE`, using a unique postcode/state
   reference match and preserving the typed spelling for scoring.

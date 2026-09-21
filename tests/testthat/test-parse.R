@@ -683,6 +683,41 @@ test_that("hyphenated flat range and hyphenated street range both parse independ
   expect_equal(r$in_number_last,  26L)
 })
 
+test_that("descending hyphenated pair after a flat marker is unit then street number", {
+  x <- c("U 6019-6 Parkland Bvd, Brisbane Q 4001",
+         "Unit 6019-6 Parkland Bvd Brisbane QLD 4001",
+         "U6019-6 Parkland Bvd Brisbane QLD 4001",
+         "Park View Apartments U 6019-6 Parkland Bvd Brisbane QLD 4001",
+         "Unit 6019-6, Parkland Bvd, Brisbane QLD 4001")
+  r <- address_parse(x)
+  expect_equal(r$in_flat_type,    rep("UNIT", length(x)))
+  expect_equal(r$in_flat_number,  rep("6019", length(x)))
+  expect_equal(r$in_number_first, rep(6L, length(x)))
+  expect_true(all(is.na(r$in_number_last)))
+  expect_equal(r$in_street_name,  rep("PARKLAND", length(x)))
+})
+
+test_that("descending flat pair keeps each number's letter suffix", {
+  r <- address_parse("U 6019A-6B Parkland Bvd Brisbane QLD 4001")
+  expect_equal(r$in_flat_number,   "6019A")
+  expect_equal(r$in_number_first,  6L)
+  expect_equal(r$in_number_suffix, "B")
+})
+
+test_that("ascending or equal flat ranges stay unit ranges", {
+  r <- address_parse(c("U 1-19 Parkland Bvd Brisbane QLD 4001",
+                       "Unit 6-6 Parkland Bvd Brisbane QLD 4001"))
+  expect_equal(r$in_flat_number, c("1-19", "6-6"))
+  expect_true(all(is.na(r$in_number_first)))
+})
+
+test_that("a descending flat pair is left alone when a street number is also given", {
+  r <- address_parse(c("Unit 6019-6 25 Parkland Bvd Brisbane QLD 4001",
+                       "6 Unit 6019-6 Parkland Bvd Brisbane QLD 4001"))
+  expect_equal(r$in_flat_number,  rep("6019-6", 2L))
+  expect_equal(r$in_number_first, c(25L, 6L))
+})
+
 # ---- Number + letter slash suffix ("40/B") ----------------------------------
 
 test_that("number/letter slash notation parses as a street-number suffix, not a unit", {
