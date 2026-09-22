@@ -656,7 +656,7 @@ print.gnaf_threshold_filter <- function(x, ...) {
                                       method_fn = jsdiffr::diff_chars) {
   pair_cols <- .gnaf_diff_pair_columns(pair)
   display <- copy(x)
-  setorder(display, -total_score, na.last = TRUE)
+  setorder(display, input_id, match_rank, na.last = TRUE)
 
   left <- display[[pair_cols$left]]
   right <- display[[pair_cols$right]]

@@ -346,6 +346,15 @@ test_that(".gnaf_threshold_html_page renders a self-contained diff table", {
   )
 })
 
+test_that("static diff output preserves preferred rank when scores decrease out of order", {
+  x <- threshold_results()[1:2]
+  x[, `:=`(input_id = 1L, match_rank = c(2L, 1L), total_score = c(90L, 80L),
+           address_label = c("WRONG HOUSE", "POSTCODE CORRECTION"))]
+  page <- .gnaf_threshold_html_page(x, "res")
+  expect_lt(regexpr("<td>POSTCODE CORRECTION</td>", page, fixed = TRUE)[1L],
+            regexpr("<td>WRONG HOUSE</td>", page, fixed = TRUE)[1L])
+})
+
 test_that("html = TRUE/path bypasses the Shiny app and writes a static diff table", {
   x <- threshold_results()
 

@@ -811,7 +811,17 @@ address_parse <- function(addresses, normalize = TRUE) {
     }
     if (any(!ok2)) {
       rest_no <- rest[!ok2]
-      in_street_name[idx[!ok2]] <- fifelse(nzchar(rest_no), rest_no, NA_character_)
+      idx_no  <- idx[!ok2]
+      in_street_name[idx_no] <- fifelse(nzchar(rest_no), rest_no, NA_character_)
+      desc <- .descending_flat_range(in_flat_number[idx_no])
+      if (any(desc$hit)) {
+        idx_d <- idx_no[desc$hit]
+        in_flat_number[idx_d] <- desc$flat[desc$hit]
+        num <- .split_number_vec(desc$number[desc$hit])
+        in_number_first[idx_d]  <- num$first
+        in_number_last[idx_d]   <- num$last
+        in_number_suffix[idx_d] <- num$suffix
+      }
     }
     fast[idx] <- TRUE
   }
@@ -1397,6 +1407,7 @@ address_parse <- function(addresses, normalize = TRUE) {
     } else {
       if (nzchar(pre))  out$building_name <- pre
       out$street_name  <- if (nzchar(post)) post else NA_character_
+      out <- .split_descending_flat_range(out)
     }
     return(out)
   }
@@ -1440,6 +1451,26 @@ address_parse <- function(addresses, normalize = TRUE) {
   }
 
   out
+}
+
+# A flat marker followed by a single hyphenated pair and no other number, with
+# the first number larger than the second ("U 6019-6 Parkland Bvd"), is a unit
+# and a street number - a real unit range ascends ("Unit 1-19"). Callers pass
+# flat numbers that have no street number after them; `hit` marks the ones to
+# split at the hyphen into unit `flat` (6019) and street `number` (6).
+.descending_flat_range <- function(x) {
+  m <- stringi::stri_match_first_regex(x, "^(\\d+[A-Z]?)-(\\d+[A-Z]?)$")
+  first  <- as.numeric(sub("[A-Z]+$", "", m[, 2L]))
+  second <- as.numeric(sub("[A-Z]+$", "", m[, 3L]))
+  list(hit = !is.na(first) & !is.na(second) & first > second,
+       flat = m[, 2L], number = m[, 3L])
+}
+
+.split_descending_flat_range <- function(out) {
+  d <- .descending_flat_range(out$flat_number)
+  if (!d$hit) return(out)
+  out$flat_number <- d$flat
+  .apply_parsed_number(out, d$number)
 }
 
 # Vectorized split of "NUM[-NUM]" tokens (numbers may carry a trailing alpha

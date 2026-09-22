@@ -255,3 +255,48 @@ six-case scoring fixture explicitly uses the reported weights. Historical score
 fixtures retain their original explicit weights, and the state-only matching
 assertion now accounts for the configured postcode weight. The full package
 suite was not rerun for this follow-up.
+
+## Follow-up: prefer a unique address when only its postcode differs
+
+Matching now ranks exact component identity ahead of weighted agreement. With
+`locality_fallback = TRUE`, a targeted exact-locality search also retrieves
+otherwise exact addresses across postcodes, even when the existing suburb
+score is perfect or the weighted result exceeds `fallback_threshold`.
+
+The new `match_basis` column distinguishes `exact_components`, `postcode_only`
+and `weighted` results. `match_rank` is authoritative; component scores,
+`total_score` and `min_score` retain their numerical meaning. Score gaps remain
+numerical diagnostics and can be negative for a preferred postcode correction.
+The application and static diff output preserve rank in their initial ordering.
+
+The preference requires exact street-number intervals, street name and locality,
+compatible supplied state/type, and agreement on suffixes, directions, units and
+levels, including their presence or absence. Supplied lot and building names
+must agree. Alias rows sharing a principal count as one address; separate
+secondary addresses remain distinct. Uniqueness is checked across the complete
+eligible identity search before score cutoffs and result limits. Ambiguity keeps
+weighted ranking. Cache version 18 invalidates earlier decisions, and
+postcode-only corrections are not stored in the single-winner cache.
+
+On the existing read-only `C:/temp/test3a.duckdb`, both reported Musgrave inputs
+now return `GAQLD155735246` at rank 1. The correct-postcode input scores 100. The
+`4000` input retains scores of 80 under the 20/15/40/10/10/5 weights and 88 under
+12/12/16/10/30/20. The wrong-number candidate scoring 90 remains available below
+the preferred correction when multiple results are requested.
+
+A same-process before/after comparison of 1,000 sampled simulated addresses
+(`set.seed(190)`, default local weights, cache disabled, no database rebuild)
+took 44.69 seconds before and 51.42 seconds after, approximately 15% longer.
+All selected PIDs were unchanged in that sample: 386 exact-component matches,
+611 weighted matches and three unmatched inputs. These are local wall-clock
+measurements while test processes were also running, not an isolated benchmark.
+
+Validation: the full `testthat::test_local()` run passed the matching, parsing,
+postcode-identity, cache, scoring, spatial and validation tests. Its only failure
+was the new static-display ordering assertion: that process had loaded the
+display implementation before its final edit but read the updated test later.
+A fresh `testthat::test_local(filter = "^(app|threshold-app)$")` run passed,
+including that assertion. Focused reruns also verified the final identity-search
+shortcuts and the negative numerical score gap. The real Musgrave examples were
+rechecked against the final code with `max_results = 1` and both weight sets.
+The runs reported the existing `shiny` and `data.table` R-version build warnings.

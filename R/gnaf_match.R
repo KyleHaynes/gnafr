@@ -1,6 +1,6 @@
 #' Match a vector of address strings against the GNAF database
 #'
-#' Uses a five-path strategy:
+#' Uses an exact-identity search alongside five fuzzy retrieval paths:
 #' \enumerate{
 #'   \item \strong{Postcode path} - primary, blocks on the parsed postcode.
 #'   \item \strong{State path} - for inputs with no parseable postcode.
@@ -67,7 +67,9 @@
 #'   \code{\link{gnaf_join_geographies}}. Column-name collisions are errors.
 #' @param locality_fallback If \code{TRUE} (default), re-searches by locality
 #'   name for unmatched inputs and results below \code{fallback_threshold}
-#'   whose locality component is weak.
+#'   whose locality component is weak. Also searches exact locality names across
+#'   postcodes for otherwise exact addresses, independently of scores and
+#'   \code{fallback_threshold}.
 #' @param street_number_fallback If \code{TRUE} (default), re-searches by
 #'   street name (dropping the number-based candidate filter every other path
 #'   uses) for unmatched inputs and results below \code{fallback_threshold}
@@ -107,6 +109,20 @@
 #'   identifiers earn half credit; conflicting identifiers earn none. UNIT,
 #'   APARTMENT and FLAT are equivalent designators, as are LEVEL and FLOOR.
 #'   These scores measure agreement; they are not calibrated probabilities.
+#'
+#'   Ranking first prefers exact component matches, then a unique otherwise
+#'   exact address with a different postcode, then weighted matches. The
+#'   postcode preference requires \code{locality_fallback = TRUE}. It requires
+#'   an exact, present street number (including both range endpoints), street
+#'   name and locality. State and street type must agree when supplied; number
+#'   suffixes, directions, units and levels must agree, including their presence
+#'   or absence. Supplied lot and building names must agree. Existing canonical
+#'   designators and numeric identifier normalisation apply.
+#'   Uniqueness is checked before \code{min_score} or \code{max_results} filters;
+#'   aliases of one principal share an identity, but secondary addresses remain
+#'   distinct. Ambiguous alternatives retain weighted ranking. Scores and
+#'   \code{min_score} retain their numerical meaning: a preferred candidate can
+#'   have a lower score than a later result, and cannot bypass the score cutoff.
 #'   Candidate pruning uses the requested weights and minimum score: a street
 #'   comparison is discarded only if its rounded score plus an upper bound on
 #'   the other components cannot reach \code{min_score}. Postcode/state and
@@ -128,13 +144,18 @@
 #'   previously matched addresses and stores new high-confidence results. The
 #'   one-result cache requires default weights, normalisation, candidate filters
 #'   and fallback settings, and is bypassed when \code{max_results > 1}.
+#'   Postcode-only corrections are not cached because their uniqueness must be
+#'   established by a fresh search.
 #' @param cache_threshold Minimum score for a new result to be cached.
 #'   Default 95.
 #' @param verbose If \code{TRUE}, prints colored progress, timings, and match
 #'   summary information using the \pkg{cli} package.
-#' @return A \code{data.table} ordered by \code{input_id} then descending
-#'   \code{total_score}. Includes a standardised input string for every row and
-#'   retains unmatched inputs with missing match columns.
+#' @return A \code{data.table} ordered by \code{input_id} then \code{match_rank}.
+#'   The \code{match_basis} column is \code{exact_components},
+#'   \code{postcode_only}, or \code{weighted}, and is \code{NA} for unmatched
+#'   inputs. Within each basis, candidates sort by descending \code{total_score}
+#'   then PID. Includes a standardised input string for every row and retains
+#'   unmatched inputs with missing match columns.
 #' @export
 gnaf_match <- function(addresses, con, max_results = 1L, min_score = 60L,
                        include_custom = TRUE,
@@ -284,9 +305,9 @@ gnaf_match <- function(addresses, con, max_results = 1L, min_score = 60L,
   verbose_stats$exact_elapsed <- proc.time()[["elapsed"]] - exact_timer
   if (!is.null(exact_path) && nrow(exact_path) > 0L) {
     results[["exact"]] <- exact_path
-    # An exact label can still score poorly, or leave requested alternatives
-    # unfilled. Those inputs must continue through component matching.
-    skip_ids <- exact_path[, .(complete = sum(total_score == 100L) >= max_results),
+    # Labels can disagree with their stored components. Only verified identity
+    # can stop retrieval; 100 points can hide conflicts in zero-weight fields.
+    skip_ids <- exact_path[, .(complete = sum(match_basis == "exact_components") >= max_results),
                             by = input_id][complete == TRUE, input_id]
     verbose_stats$exact_inputs <- uniqueN(exact_path$input_id)
     .cli_match_detail(verbose, sprintf(
@@ -322,10 +343,11 @@ gnaf_match <- function(addresses, con, max_results = 1L, min_score = 60L,
       )
       if (nrow(cache_raw) > 0L) {
         cache_hits <- cache_raw[
-          parsed[!input_id %in% skip_ids, .(input_id, input_standardised)],
+          parsed[!input_id %in% skip_ids],
           on = "input_standardised", nomatch = 0L
         ]
         if (nrow(cache_hits) > 0L) {
+          .set_exact_match_basis(cache_hits, con)
           cache_hits[, match_rank := 1L]
           results[["cache"]] <- cache_hits
           verbose_stats$cache_inputs <- uniqueN(cache_hits$input_id)
@@ -376,7 +398,7 @@ gnaf_match <- function(addresses, con, max_results = 1L, min_score = 60L,
     strong_ids <- if (!is.null(exact_components$matches) &&
                       nrow(exact_components$matches) > 0L) {
       exact_components$matches[
-        , .(perfect_matches = sum(total_score == 100L)), by = input_id
+        , .(perfect_matches = sum(match_basis == "exact_components")), by = input_id
       ][perfect_matches >= max_results, input_id]
     } else {
       integer()
@@ -421,6 +443,27 @@ gnaf_match <- function(addresses, con, max_results = 1L, min_score = 60L,
   }
 
   # ------------------------------------------------------------------
+  # Exact identity search is independent of scores and the weak-locality gate.
+  # It also retains same-postcode exact matches before any top-N truncation.
+  if (locality_fallback) {
+    identity_inputs <- match_inputs
+    if (max_results == 1L) {
+      # Exact identity already outranks every correction, so its winner does
+      # not need an additional search. Never use a weighted total for this.
+      exact_ids <- unique(unlist(lapply(results, function(rows) {
+        if (is.null(rows)) return(integer())
+        rows[match_basis == "exact_components", input_id]
+      })))
+      identity_inputs <- identity_inputs[!input_id %in% exact_ids]
+    }
+    identity_path <- .match_postcode_identity_duckdb(
+      con, identity_inputs, max_results, min_score, weights, include_custom,
+      verbose, alias_types
+    )
+    results[["identity"]] <- identity_path$matches
+    diagnostics[["identity"]] <- identity_path$diagnostics
+  }
+
   # Path 3: locality fallback for weak / wrong-postcode results
   # ------------------------------------------------------------------
   if (locality_fallback) {
@@ -566,9 +609,8 @@ gnaf_match <- function(addresses, con, max_results = 1L, min_score = 60L,
   }
   out <- rbindlist(results, fill = TRUE, use.names = TRUE)
   if (nrow(out) > 0L) {
-    # Deduplicate: same GNAF record may appear from multiple paths; the order
-    # puts the higher-scoring duplicate first so unique() keeps it.
-    setorder(out, input_id, -total_score, address_detail_pid)
+    # Preserve identity preferences before deduplicating and applying top-N.
+    .order_address_matches(out)
     out <- unique(out, by = c("input_id", "address_detail_pid"))
 
     # Re-apply max_results and assign final rank
@@ -586,7 +628,7 @@ gnaf_match <- function(addresses, con, max_results = 1L, min_score = 60L,
   out <- .append_match_status(out, parsed, diagnostics)
 
   cols_first <- c("input_id", "input_raw", "input_standardised", "address_label", "match_rank",
-                  "matched", "match_status", "total_score", "score_postcode", "score_suburb",
+                  "matched", "match_status", "match_basis", "total_score", "score_postcode", "score_suburb",
                   "score_street_name", "score_street_type", "score_number",
                   "score_flat")
   setcolorder(out, c(cols_first, setdiff(names(out), cols_first)))
@@ -764,7 +806,7 @@ gnaf_match <- function(addresses, con, max_results = 1L, min_score = 60L,
 .run_duckdb_score_query <- function(con, inputs_tbl, gnaf_tbl, join_clause,
                                     pre_filter, weights, max_results, min_score,
                                     verbose = FALSE, label = "",
-                                    split_number = FALSE) {
+                                    split_number = FALSE, identity_only = FALSE) {
   exprs <- .score_sql_exprs(
     weights, i = "c", g = "c",
     suburb_similarity = "c.suburb_similarity",
@@ -801,14 +843,15 @@ gnaf_match <- function(addresses, con, max_results = 1L, min_score = 60L,
   eff_type_expr <- if (has_sti) "COALESCE(sti.effective_type, g.street_type)" else "g.street_type"
   raw_projection <- sprintf("SELECT
     g.address_detail_pid, g.address_label,
-    g.postcode, g.locality_name,
+    g.postcode, g.locality_name, g.state, g.building_name,
     %s AS street_name,
     %s AS street_type,
     g.street_suffix,
     g.number_first, g.number_last, g.lot_number,
     g.flat_type, g.flat_number, g.level_type, g.level_number,
     i.input_id,
-    i.in_postcode, i.in_locality, i.in_street_name, i.in_street_type, i.in_street_suffix,
+    i.in_postcode, i.in_locality, i.in_state, i.in_building_name,
+    i.in_street_name, i.in_street_type, i.in_street_suffix,
     i.in_number_first, i.in_number_last, i.in_number_suffix, i.in_lot_number,
     i.in_flat_type, i.in_flat_number, i.in_level_type, i.in_level_number,
     %s AS suburb_similarity,
@@ -869,6 +912,10 @@ gnaf_match <- function(addresses, con, max_results = 1L, min_score = 60L,
     )
   }
 
+  identity_sql <- .address_identity_sql("c", "c")
+  if (identity_only) street_bound <- paste0("(", identity_sql, ") AND (", street_bound, ")")
+  identity_basis <- sprintf(paste0("CASE WHEN c.in_postcode = c.postcode AND (%s) ",
+    "THEN 'exact_components' ELSE 'weighted' END AS match_basis"), identity_sql)
   final_scores <- paste0("r.", names(exprs), collapse = ", ")
   sql <- sprintf("
 WITH raw_candidates AS (
@@ -879,7 +926,7 @@ candidates AS (
   WHERE %s
 ),
 components AS (
-  SELECT address_detail_pid, input_id,
+  SELECT address_detail_pid, input_id, %s,
 %s
   FROM candidates c
 ),
@@ -889,17 +936,19 @@ scored AS (
 ),
 ranked AS (
   SELECT *,
-    ROW_NUMBER() OVER (PARTITION BY input_id ORDER BY total_score DESC, address_detail_pid) AS match_rank
+    ROW_NUMBER() OVER (PARTITION BY input_id ORDER BY
+      (match_basis = 'exact_components') DESC, total_score DESC, address_detail_pid) AS match_rank
   FROM scored
   WHERE total_score >= %d
 )
-SELECT %s, r.input_id, %s, r.total_score, r.match_rank
+SELECT %s, r.input_id, %s, r.total_score, r.match_rank, r.match_basis
 FROM ranked r
 JOIN %s g ON g.address_detail_pid = r.address_detail_pid
 WHERE r.match_rank <= %d
 ",
     candidate_sql,
     street_bound,
+    identity_basis,
     sel_scores,
     score_total,
     min_score,
@@ -943,7 +992,7 @@ WHERE r.match_rank <= %d
     fill = TRUE, use.names = TRUE
   )
   if (nrow(matches) > 0L) {
-    setorder(matches, input_id, -total_score, address_detail_pid)
+    .order_address_matches(matches)
     # Exact and fuzzy paths can return the same candidate. Remove repeats
     # before applying the limit so they cannot displace distinct alternatives.
     matches <- unique(matches, by = c("input_id", "address_detail_pid"))
@@ -1429,6 +1478,7 @@ WHERE r.match_rank <= %d
   data.table(
     input_id = integer(), input_raw = character(), input_standardised = character(),
     match_rank = integer(), matched = logical(), match_status = character(),
+    match_basis = character(),
     total_score = integer(),
     score_postcode = integer(), score_suburb = integer(),
     score_street_name = integer(), score_street_type = integer(),
@@ -1668,6 +1718,7 @@ WHERE r.match_rank <= %d
   }
 
   joined <- .score_pairs(joined, weights = weights)
+  .set_exact_match_basis(joined, con)
   joined <- joined[total_score >= min_score]
   if (nrow(joined) == 0L) return(NULL)
   joined[, match_rank := 1L]

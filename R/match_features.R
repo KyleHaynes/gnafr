@@ -18,6 +18,8 @@
 #' the best other returned PID for the same input; it is `NA` when no other
 #' candidate was returned. It cannot detect alternatives excluded by retrieval,
 #' `min_score` or `max_results`. `tied_best` also refers only to returned PIDs.
+#' These are numerical score comparisons, not identity-ranking preferences;
+#' a `match_rank == 1` postcode correction can have a negative `score_gap`.
 #' Use `max_results > 1` to expose alternatives.
 #'
 #' Linked returns use the original `matched_*` address fields. Unmatched rows

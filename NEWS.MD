@@ -2,6 +2,11 @@
 
 ## Address parsing
 
+- Read a descending hyphenated pair after a flat marker as a unit and a street
+  number, so `U 6019-6 Parkland Bvd` parses as unit `6019`, number `6` instead
+  of a single `6019-6` unit range. Ascending or equal ranges (`Unit 1-19`) are
+  still unit ranges, and the pair is left alone when a separate street number
+  is also present.
 - Recover missing locality boundaries for adjacent-letter swaps such as
   `UBRLEIGH HEADS` and `SUFRERS PARADISE`, using a unique postcode/state
   reference match and preserving the typed spelling for scoring.
@@ -27,6 +32,15 @@
 
 ## Matching and scoring
 
+- Rank candidate addresses by exact component matching: fully exact matches first,
+  then unique otherwise-exact matches with a different postcode, then remaining
+  candidates by weighted score. Require matching state and street type when supplied,
+  and exact street number, street name, and locality for special preference. Add
+  `match_basis` field to indicate ranking category (`exact_components`, 
+  `postcode_only`, `weighted`, or `NA`). With locality fallback enabled, run a
+  targeted exact-locality search across postcodes for sufficiently specified
+  inputs, independent of weighted scores. Bumps the match-cache algorithm version,
+  so old cached entries are no longer served.
 - Some real GNAF records have a blank street type, with any type word baked
   into the street name instead (e.g. `street_name = "THE POINT CIRCUIT"`,
   `street_type = NULL`) - about 0.9% of rows in a full GNAF load. Scoring now
