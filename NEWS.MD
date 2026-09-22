@@ -1,3 +1,10 @@
+# gnafr 0.0.4
+
+## Misc
+
+- Startup message is more verbose, detailing functions by category.
+
+
 # gnafr 0.0.3
 
 ## Address parsing

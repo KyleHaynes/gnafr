@@ -58,8 +58,12 @@ importFrom(cli,
   col_blue,
   col_cyan,
   col_green,
+  col_grey,
   col_magenta,
-  col_yellow
+  col_yellow,
+  combine_ansi_styles,
+  is_utf8_output,
+  style_bold
 )
 importFrom(duckdb,
   duckdb,

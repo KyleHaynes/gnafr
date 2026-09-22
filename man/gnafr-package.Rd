@@ -10,6 +10,60 @@ Fast, fuzzy Australian address matching against the Geocoded National
 Address File (GNAF). Supports bulk lookup (100k+), a confidence scoring
 algorithm, DuckDB-backed storage, and custom address additions.
 }
+\details{
+Loading the package prints the function index below as a tree. Silence it
+with `options(gnafr.verbose = FALSE)` before [library()], or wrap the call
+in [suppressPackageStartupMessages()].
+}
+\section{Function index}{
+
+* **Database setup**
+  * [gnaf_connect()] - connect to a gnafr database
+  * [gnaf_disconnect()] - disconnect from a database
+  * [gnaf_init()] - initialise the gnafr schema
+  * [gnaf_status()] - row counts for all tables
+  * [gnaf_build_db()] - build DB from raw G-NAF extract
+* **Data loading**
+  * [gnaf_load()] - load GNAF data from CSV
+  * [gnaf_load_psv()] - load GNAF data from PSV files
+  * [gnaf_build_street_aliases()] - street-only fallback rows
+  * [gnaf_canonicalize_street_types()] - canonicalise street types
+  * [gnaf_rebuild_locality_index()] - rebuild locality search index
+  * [gnaf_rebuild_street_type_index()] - rebuild street-type index
+* **Custom addresses**
+  * [gnaf_add()] - add custom addresses
+  * [gnaf_remove_custom()] - remove custom addresses
+* **Matching**
+  * [address_parse()] - parse address into components
+  * [gnaf_match()] - match addresses against GNAF
+  * [gnaf_match_features()] - agreement/conflict features
+  * [gnaf_text_scores()] - full-string similarity scores
+  * [gnaf_threshold_filter()] - interactive match thresholding
+* **Geographies**
+  * [gnaf_add_geography()] - add a geography (e.g. SA2)
+  * [gnaf_register_geography()] - register existing geography table
+  * [gnaf_list_geographies()] - list registered geographies
+  * [gnaf_join_geographies()] - join geography attributes
+  * [gnaf_geography_coverage()] - check geography coverage
+  * [gnaf_remove_geography()] - remove a saved geography
+* **Spatial & shapefiles**
+  * [gnaf_add_spatial()] - store polygon attributes
+  * [read_shapefile()] - read shapefile, list columns
+  * [subset_shapefile()] - subset sf object by column
+  * [spatial_lookup()] - point-in-polygon lookup
+  * [plot_boundaries_heatmap()] - plot boundaries + heatmap
+* **Match cache**
+  * [gnaf_cache_status()] - current match cache state
+  * [gnaf_cache_clear()] - clear the match cache
+  * [gnaf_cache_rollback()] - roll back cache after a time
+  * [gnaf_cache_history()] - summarise cache over time
+  * [gnaf_cache_sample()] - sample rows from the cache
+  * [sample_gnaf()] - sample rows from DB tables
+* **App & simulation**
+  * [gnaf_app()] - launch interactive matching app
+  * [address_perturb_sample()] - sample + perturb test addresses
+}
+
 \author{
 \strong{Maintainer}: Kyle Haynes \email{kyle@kylehaynes.com.au}
 
