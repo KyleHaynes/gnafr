@@ -94,6 +94,29 @@ parser and scorer rely on directly:
 | `STATE` / `POSTCODE` | `QLD` / `4226` |
 | `LONGITUDE` / `LATITUDE` | `153.4023` / `-28.03448` |
 
+### Optional: collapse secondaries at the primary's coordinates
+
+All three entry points (`gnaf_build_db()`, `gnaf_load_psv()`, and `gnaf_load()`)
+accept `collapse_same_coordinates = FALSE`. Enable it to reduce lookup rows:
+
+```{r}
+#| eval: false
+gnaf_load(con, "C:/temp/gnaf.qld.csv", collapse_same_coordinates = TRUE)
+```
+
+A secondary is removed only when its linked GNAF primary exists and both finite
+coordinates match exactly. Its aliases are also removed; the primary and its
+aliases remain. Unrelated addresses sharing a point, secondaries with different
+or missing coordinates, missing primary links, and custom addresses are retained.
+The CSV loader applies this after the complete file batch, including previously
+loaded GNAF rows. The PSV loader applies it within each requested state's load
+transaction, before rebuilding indexes and clearing the match cache.
+
+The smaller table may speed up matching, but loses unit-level detail and can
+change scores or coverage. Reload the source files with the option off to restore
+removed records. Use `gnaf_match(return_primary = TRUE)` instead when you want
+to preserve the full lookup table and just return primary address fields.
+
 ## Step 2 — Canonicalise street types (usually a no-op)
 
 ```{r}

@@ -1,5 +1,26 @@
 # gnafr 0.0.4
 
+## Matching
+
+- Number and unit credit is now conditional on the street agreeing. A house number
+  or unit only locates an address within a street, so `score_number` and
+  `score_flat` are scaled by street-name agreement (unchanged for the same street
+  or when either street name is missing; near zero for an unrelated street).
+  Previously a different street sharing the input's number and unit could collect
+  the whole number + flat weight and outrank the right street whose number is
+  missing from GNAF (GNAF lag). On real QLD addresses re-typed with a house number
+  that does not exist on their street, the wrong street was returned for 79% of
+  inputs without a unit and 48% with one; it is now 1% and 3%. On the simulated
+  typo benchmark, correct-PID moves 78.9% -> 78.3%, wrong-PID 21.1% -> 20.5%, and
+  ~1% of inputs move from matched to unmatched (about half of them wrong matches).
+  `total_score` is still the sum of its component columns; `gnaf_match_features()`
+  still reports raw agreement. Older match-cache entries are ignored.
+- Candidates with equal scores are now ordered by the house number nearest the one
+  requested, then by PID, so a missing number resolves to the closest real house
+  on the street rather than the lowest PID.
+- The `weights` and `fallback_threshold` documentation now states the current
+  defaults (12/12/16/10/30/20).
+
 ## Misc
 
 - Startup message is more verbose, detailing functions by category.

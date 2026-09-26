@@ -82,15 +82,13 @@
 #'   \code{FALSE}.
 #' @param fallback_threshold Total score at or below which a weak-locality
 #'   result is eligible for locality fallback. Default 90: a clean correct
-#'   match typically scores 95+, whereas a
-#'   coincidental match - same postcode and house number, unrelated street -
-#'   can still reach into the low-to-mid 80s (e.g. 20 postcode + 10 number +
-#'   partial suburb/street-name credit). 90 leaves enough margin to catch those
-#'   coincidences and let the locality scan (which discovers the right postcode
-#'   from the suburb name regardless of how far off the stated one is) find the
-#'   true candidate, without firing for genuinely good matches.
-#' @param weights Named list of score weights. Defaults to postcode = 20,
-#'   suburb = 15, street_name = 40, street_type = 10, number = 10, flat = 5.
+#'   match typically scores 95+, whereas a result at or below 90 has a real
+#'   discrepancy in its suburb, street, number or unit. 90 leaves enough margin
+#'   to let the locality scan (which discovers the right postcode from the
+#'   suburb name regardless of how far off the stated one is) find the true
+#'   candidate, without firing for genuinely good matches.
+#' @param weights Named list of score weights. Defaults to postcode = 12,
+#'   suburb = 12, street_name = 16, street_type = 10, number = 30, flat = 20.
 #'   Weights must sum to 100.
 #' @details Street numbers compare both range endpoints: exact intervals earn
 #'   full number weight, a candidate containing the input earns 70%, a candidate
@@ -101,6 +99,20 @@
 #'   candidate retrieval and number scoring. Lots are used for this purpose only
 #'   when the input has no street number. Use [gnaf_match_features()] to inspect
 #'   lot agreement separately, alongside other conflicts and missing evidence.
+#'
+#'   A house number or unit only locates an address within a street, so number
+#'   and flat credit is conditional on the street: \code{score_number} and
+#'   \code{score_flat} are scaled by how well the street name agrees (1 for the
+#'   same street, falling with the same name similarity that drives
+#'   \code{score_street_name}, and left alone when either street name is
+#'   missing). A different street that merely shares the number and unit earns
+#'   almost nothing for them, so it cannot outrank the right street whose number
+#'   is absent from GNAF, for example because GNAF lags new development; that
+#'   street is found by the street-number-relaxed fallback and returned with an
+#'   honestly low \code{score_number}. Ties in score go to the address whose
+#'   house number is nearest the one requested, then to the lowest PID.
+#'   \code{total_score} sums the gated components, while [gnaf_match_features()]
+#'   still reports raw agreement.
 #'
 #'   Street directions qualify the street-type score: agreement keeps full
 #'   credit, a missing direction halves it, and conflicting directions score
@@ -153,8 +165,9 @@
 #' @return A \code{data.table} ordered by \code{input_id} then \code{match_rank}.
 #'   The \code{match_basis} column is \code{exact_components},
 #'   \code{postcode_only}, or \code{weighted}, and is \code{NA} for unmatched
-#'   inputs. Within each basis, candidates sort by descending \code{total_score}
-#'   then PID. Includes a standardised input string for every row and retains
+#'   inputs. Within each basis, candidates sort by descending \code{total_score},
+#'   then nearest house number, then PID. Includes a standardised input string
+#'   for every row and retains
 #'   unmatched inputs with missing match columns.
 #' @export
 gnaf_match <- function(addresses, con, max_results = 1L, min_score = 60L,
@@ -525,9 +538,10 @@ gnaf_match <- function(addresses, con, max_results = 1L, min_score = 60L,
   # Deliberately not conditioned on the current best candidate's own
   # score_number: the winning candidate under the old number-first filter
   # necessarily has a matching/overlapping number (that's how it got
-  # through), so its score_number is often already full even when its street
-  # is wrong - checking it would almost never catch the exact bug this path
-  # exists to fix. A plain weak-total-score bar (mirroring locality
+  # through), so its number says nothing about whether its street is right.
+  # Number and flat credit is now scaled by street agreement (see
+  # .street_gate()), which is what stops such a wrong-street candidate from
+  # posting a high total and suppressing this path. A plain weak-total-score bar (mirroring locality
   # fallback's) lets the street-name search itself decide whether re-running
   # helps; if the parsed street has no better row anywhere, it simply finds
   # nothing and the existing result stands.
@@ -616,6 +630,7 @@ gnaf_match <- function(addresses, con, max_results = 1L, min_score = 60L,
     # Re-apply max_results and assign final rank
     out <- out[out[, .I[seq_len(min(.N, max_results))], by = input_id]$V1]
     out[, match_rank := seq_len(.N), by = input_id]
+    out[, number_distance := NULL]
   } else {
     out <- .empty_result()
   }
@@ -810,7 +825,8 @@ gnaf_match <- function(addresses, con, max_results = 1L, min_score = 60L,
   exprs <- .score_sql_exprs(
     weights, i = "c", g = "c",
     suburb_similarity = "c.suburb_similarity",
-    street_similarity = "c.street_similarity"
+    street_similarity = "c.street_similarity",
+    street_gate = "c.street_gate"
   )
   sel_scores <- paste(
     mapply(function(nm, ex) sprintf("    %s AS %s", ex, nm), names(exprs), exprs),
@@ -822,12 +838,15 @@ gnaf_match <- function(addresses, con, max_results = 1L, min_score = 60L,
   # Bound the remaining components conservatively, including fractional weights.
   # Use the actual name expression, including blended metrics, directions and
   # exact/rounding rules. A raw-JW bound could discard a valid improved score.
-  other_max <- sum(ceiling(unlist(weights[
-    !names(weights) %in% c("postcode", "street_name")
-  ])))
+  # Number and flat credit is scaled by the street gate, so a candidate on a
+  # different street can earn almost none of it: bound those two by the gate
+  # (+1 for their independent half-even roundings) rather than their full
+  # weights, which prunes wrong streets before they are scored in full.
+  other_max <- sum(ceiling(unlist(weights[c("suburb", "street_type")])))
+  gated_max <- sum(ceiling(unlist(weights[c("number", "flat")])))
   street_bound <- sprintf(
-    "(%s) + (%s) + %g >= %d",
-    exprs$score_postcode, exprs$score_street_name, other_max, min_score
+    "(%s) + (%s) + %g + CEIL(%g * c.street_gate) + 1 >= %d",
+    exprs$score_postcode, exprs$score_street_name, other_max, gated_max, min_score
   )
   # Some GNAF rows have a blank street_type with any type word embedded in
   # street_name instead (e.g. "THE POINT CIRCUIT" with street_type NULL -
@@ -922,11 +941,14 @@ WITH raw_candidates AS (
 %s
 ),
 candidates AS (
-  SELECT * FROM raw_candidates c
+  SELECT * FROM (
+    SELECT c.*, %s AS street_gate FROM raw_candidates c
+  ) c
   WHERE %s
 ),
 components AS (
   SELECT address_detail_pid, input_id, %s,
+    CAST(ABS(c.number_first - c.in_number_first) AS INTEGER) AS number_distance,
 %s
   FROM candidates c
 ),
@@ -937,16 +959,18 @@ scored AS (
 ranked AS (
   SELECT *,
     ROW_NUMBER() OVER (PARTITION BY input_id ORDER BY
-      (match_basis = 'exact_components') DESC, total_score DESC, address_detail_pid) AS match_rank
+      (match_basis = 'exact_components') DESC, total_score DESC,
+      number_distance ASC NULLS LAST, address_detail_pid) AS match_rank
   FROM scored
   WHERE total_score >= %d
 )
-SELECT %s, r.input_id, %s, r.total_score, r.match_rank, r.match_basis
+SELECT %s, r.input_id, %s, r.total_score, r.match_rank, r.match_basis, r.number_distance
 FROM ranked r
 JOIN %s g ON g.address_detail_pid = r.address_detail_pid
 WHERE r.match_rank <= %d
 ",
     candidate_sql,
+    .street_gate_sql("c.street_similarity"),
     street_bound,
     identity_basis,
     sel_scores,

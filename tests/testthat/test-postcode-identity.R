@@ -37,8 +37,12 @@ test_that("a unique otherwise exact address outranks postcode agreement under bo
     expect_equal(many[input_id == 2L & address_detail_pid == "MUSGRAVE190"]$match_rank, 1L)
     expect_equal(anyDuplicated(many, by = c("input_id", "address_detail_pid")), 0L)
     evidence <- gnaf_match_features(many)
+    # The runner-up is MUSGRAVE14: the right street at the wrong number. It used
+    # to be PETRIE190 under the second weights (a different street sharing the
+    # number and unit scored 79), but number and flat credit is now conditional
+    # on the street, so the right street (70) is the closest alternative.
     expect_equal(evidence[input_id == 2L & match_rank == 1L]$score_gap,
-                 if (w$postcode == 20) -10 else 9)
+                 if (w$postcode == 20) -10 else 18)
   }
   disabled <- gnaf_match(inputs[2L], con, locality_fallback = FALSE,
                          weights = weights[[1L]], cache = FALSE, verbose = FALSE)

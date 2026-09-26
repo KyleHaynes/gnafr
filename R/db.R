@@ -480,10 +480,15 @@ gnaf_canonicalize_street_types <- function(con) {
 #'   alias variants. Default \code{TRUE}.
 #' @param build_street_aliases If \code{TRUE} (default), also runs
 #'   \code{gnaf_build_street_aliases} after loading.
+#' @param collapse_same_coordinates Passed to \code{gnaf_load_psv}; remove
+#'   secondaries and their aliases when the linked GNAF primary has exactly
+#'   the same finite coordinates. Default \code{FALSE} preserves unit detail.
 #' @return Invisibly, the result of \code{gnaf_status(con)}.
 #' @export
 gnaf_build_db <- function(con, gnaf_dir, states = "QLD", overwrite = FALSE,
-                          load_aliases = TRUE, build_street_aliases = TRUE) {
+                          load_aliases = TRUE, build_street_aliases = TRUE,
+                          collapse_same_coordinates = FALSE) {
+  .validate_collapse_same_coordinates(collapse_same_coordinates)
   gnaf_dir <- normalizePath(gnaf_dir, mustWork = TRUE)
 
   if (identical(toupper(states), "ALL")) {
@@ -496,7 +501,8 @@ gnaf_build_db <- function(con, gnaf_dir, states = "QLD", overwrite = FALSE,
 
   gnaf_init(con)
   gnaf_load_psv(con, gnaf_dir, state = states, overwrite = overwrite,
-               load_aliases = load_aliases)
+               load_aliases = load_aliases,
+               collapse_same_coordinates = collapse_same_coordinates)
 
   if (isTRUE(build_street_aliases)) gnaf_build_street_aliases(con)
 

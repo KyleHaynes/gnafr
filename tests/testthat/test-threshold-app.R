@@ -85,13 +85,16 @@ test_that("threshold vars include text scores and maxes come from data and weigh
   maxes <- .gnaf_threshold_maxes(data, vars)
   expect_identical(maxes$total_score, 100L)
   expect_identical(maxes$score_street_name, 40L)
-  expect_identical(maxes$score_flat, 5L)
+  expect_identical(maxes$score_flat, as.integer(gnafr:::.WEIGHTS$flat))
   expect_identical(maxes$levenshtein_score, 100L)
 
-  boosted <- copy(x)[, score_flat := 12L]
-  expect_identical(.gnaf_threshold_maxes(boosted, "score_flat")$score_flat, 12L)
+  # Observed data above the nominal weight raises the maximum.
+  above <- as.integer(gnafr:::.WEIGHTS$flat) + 5L
+  boosted <- copy(x)[, score_flat := above]
+  expect_identical(.gnaf_threshold_maxes(boosted, "score_flat")$score_flat, above)
   empty <- .gnaf_threshold_prepare(x[0L])
-  expect_identical(.gnaf_threshold_maxes(empty, vars)$score_number, 10L)
+  expect_identical(.gnaf_threshold_maxes(empty, vars)$score_number,
+                   as.integer(gnafr:::.WEIGHTS$number))
   expect_identical(nrow(empty), 0L)
 })
 

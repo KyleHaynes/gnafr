@@ -32,12 +32,12 @@ test_that("street numbers locate the correct property despite duplicate lots", {
     out <- gnaf_match(input, con, locality_fallback = FALSE,
       street_number_fallback = FALSE, cache = FALSE, verbose = FALSE)
     expect_identical(out$address_detail_pid, "Z_RIGHT")
-    expect_identical(out$score_number, 10L)
+    expect_identical(out$score_number, as.integer(round(gnafr:::.default_match_weights()$number)))
   }
   lot <- gnaf_match("Lot 7 Main Rd, Brisbane QLD 4000", con,
                     cache = FALSE, verbose = FALSE)
   expect_identical(lot$address_detail_pid, "A_WRONG")
-  expect_identical(lot$score_number, 10L)
+  expect_identical(lot$score_number, as.integer(round(gnafr:::.default_match_weights()$number)))
 })
 
 test_that("a lot-only candidate label cannot masquerade as a house number", {
@@ -105,4 +105,23 @@ test_that("linked-address evidence still refers to the candidate that was ranked
   actual <- gnaf_match_features(x)
   evidence <- setdiff(names(expected), names(x))
   expect_identical(actual[, ..evidence], expected[, ..evidence])
+})
+
+test_that("agreement features report raw number agreement even when the street differs", {
+  con <- gnaf_connect(":memory:")
+  on.exit(gnaf_disconnect(con), add = TRUE)
+  gnaf_init(con)
+  suppressMessages(gnaf_add(con, data.table::data.table(
+    address_detail_pid = "OAK", address_label = "10 OAK ROAD, BRISBANE QLD 4000",
+    number_first = 10L, street_name = "OAK", street_type = "ROAD",
+    locality_name = "BRISBANE", state = "QLD", postcode = 4000L
+  )))
+  out <- gnaf_match("10 Maple Rd, Brisbane QLD 4000", con, min_score = 0L,
+                    street_number_fallback = FALSE, cache = FALSE, verbose = FALSE)
+  expect_identical(out$address_detail_pid, "OAK")
+  # The ranking score is gated by the street mismatch...
+  expect_lt(out$score_number, 0.1 * gnafr:::.default_match_weights()$number)
+  # ...but the model feature still reports that the numbers themselves agree.
+  features <- gnaf_match_features(out)
+  expect_equal(features$agreement_number, 1)
 })

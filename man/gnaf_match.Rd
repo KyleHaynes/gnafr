@@ -80,16 +80,14 @@ other paths are re-matched against street-level aliases
 
 \item{fallback_threshold}{Total score at or below which a weak-locality
 result is eligible for locality fallback. Default 90: a clean correct
-match typically scores 95+, whereas a
-coincidental match - same postcode and house number, unrelated street -
-can still reach into the low-to-mid 80s (e.g. 20 postcode + 10 number +
-partial suburb/street-name credit). 90 leaves enough margin to catch those
-coincidences and let the locality scan (which discovers the right postcode
-from the suburb name regardless of how far off the stated one is) find the
-true candidate, without firing for genuinely good matches.}
+match typically scores 95+, whereas a result at or below 90 has a real
+discrepancy in its suburb, street, number or unit. 90 leaves enough margin
+to let the locality scan (which discovers the right postcode from the
+suburb name regardless of how far off the stated one is) find the true
+candidate, without firing for genuinely good matches.}
 
-\item{weights}{Named list of score weights. Defaults to postcode = 20,
-suburb = 15, street_name = 40, street_type = 10, number = 10, flat = 5.
+\item{weights}{Named list of score weights. Defaults to postcode = 12,
+suburb = 12, street_name = 16, street_type = 10, number = 30, flat = 20.
 Weights must sum to 100.}
 
 \item{normalize}{Passed to \code{address_parse}; defaults to \code{TRUE}.}
@@ -129,8 +127,9 @@ See \code{\link{gnaf_list_geographies}}, \code{\link{gnaf_add_geography}} and
 A \code{data.table} ordered by \code{input_id} then \code{match_rank}.
   The \code{match_basis} column is \code{exact_components},
   \code{postcode_only}, or \code{weighted}, and is \code{NA} for unmatched
-  inputs. Within each basis, candidates sort by descending \code{total_score}
-  then PID. Includes a standardised input string for every row and retains
+  inputs. Within each basis, candidates sort by descending \code{total_score},
+  then nearest house number, then PID. Includes a standardised input string
+  for every row and retains
   unmatched inputs with missing match columns.
 }
 \description{
@@ -170,6 +169,20 @@ Street numbers compare both range endpoints: exact intervals earn
   candidate retrieval and number scoring. Lots are used for this purpose only
   when the input has no street number. Use [gnaf_match_features()] to inspect
   lot agreement separately, alongside other conflicts and missing evidence.
+
+  A house number or unit only locates an address within a street, so number
+  and flat credit is conditional on the street: \code{score_number} and
+  \code{score_flat} are scaled by how well the street name agrees (1 for the
+  same street, falling with the same name similarity that drives
+  \code{score_street_name}, and left alone when either street name is
+  missing). A different street that merely shares the number and unit earns
+  almost nothing for them, so it cannot outrank the right street whose number
+  is absent from GNAF, for example because GNAF lags new development; that
+  street is found by the street-number-relaxed fallback and returned with an
+  honestly low \code{score_number}. Ties in score go to the address whose
+  house number is nearest the one requested, then to the lowest PID.
+  \code{total_score} sums the gated components, while [gnaf_match_features()]
+  still reports raw agreement.
 
   Street directions qualify the street-type score: agreement keeps full
   credit, a missing direction halves it, and conflicting directions score

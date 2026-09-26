@@ -84,12 +84,15 @@ test_that("exact and fuzzy component paths return the expected wide fields", {
 
   out <- gnaf_match(
     "Unit 2 Level 3 10 Smyth St, St Lucia QLD 4067",
-    con, cache = FALSE, verbose = FALSE
+    con, weights = legacy_weights, cache = FALSE, verbose = FALSE
   )
   expect_equal(out$address_detail_pid, "A")
   expect_equal(out$address_site_name, "SMITH CENTRE")
   expect_equal(out$level_number, "3")
-  expect_equal(out$score_flat, 5L)
+  # The unit matches, but "Smyth" is not "Smith": unit credit is scaled by how
+  # well the street agrees, so it is real but short of the full weight.
+  expect_gt(out$score_flat, 0L)
+  expect_lt(out$score_flat, legacy_weights$flat)
 })
 
 test_that("range and explicit lot blocking use the number score", {
@@ -99,7 +102,7 @@ test_that("range and explicit lot blocking use the number score", {
   out <- gnaf_match(c(
     "15 Range Rd, Brisbane QLD 4000",
     "Lot 7 Kreis Rd, Westbrook QLD 4350"
-  ), con, cache = FALSE, verbose = FALSE)
+  ), con, weights = legacy_weights, cache = FALSE, verbose = FALSE)
   expect_equal(out$address_detail_pid, c("RANGE", "LOT"))
   expect_equal(out$score_number, c(7L, 10L))
 })
@@ -130,7 +133,7 @@ test_that("a GNAF row with a blank street_type scores against its backfilled nam
   out <- gnaf_match(c(
     "8807 The Point Circuit, Hope Islad Qld 4212",
     "UNIT 3 221 The Avene, Peregian Spings Qld 4573"
-  ), con, cache = FALSE, verbose = FALSE)
+  ), con, weights = legacy_weights, cache = FALSE, verbose = FALSE)
   expect_equal(out$address_detail_pid, c("CIRCUIT", "AVENUE"))
   # CIRCUIT has no typo in its street text, so it now scores an exact
   # street-name/type match; AVENUE keeps one genuine typo ("Avene" for
@@ -197,7 +200,7 @@ test_that("legacy cache rows are ignored and replaced with the current version",
      VALUES ('%s', 'A2', 80, 1)", key
   ))
 
-  out <- gnaf_match(input, con, min_score = 90L, verbose = FALSE)
+  out <- gnaf_match(input, con, min_score = 90L, cache_threshold = 90L, verbose = FALSE)
   expect_equal(out$address_detail_pid, "RANGE")
   cached <- DBI::dbGetQuery(con, "
     SELECT algorithm_version, total_score FROM gnaf_match_cache
@@ -210,7 +213,7 @@ test_that("address mutations invalidate cached matches", {
   con <- new_fixture_connection()
   on.exit(gnaf_disconnect(con), add = TRUE)
   invisible(gnaf_match(
-    "15 Range Rd, Brisbane QLD 4000", con, verbose = FALSE
+    "15 Range Rd, Brisbane QLD 4000", con, cache_threshold = 0L, verbose = FALSE
   ))
   expect_gt(DBI::dbGetQuery(con, "SELECT COUNT(*) n FROM gnaf_match_cache")$n, 0)
 
@@ -310,13 +313,18 @@ test_that("street-number-relaxed fallback finds the real street when its number 
 
   fixed <- gnaf_match(input, con, cache = FALSE, verbose = FALSE)
   expect_identical(fixed$address_detail_pid, "WILLIAM_REAL")
-  expect_identical(fixed$score_street_name, 40L)
+  expect_identical(fixed$score_street_name,
+                   as.integer(round(gnafr:::.default_match_weights()$street_name)))
   expect_identical(fixed$score_number, 0L)
 
-  # The flag must actually gate the new behaviour, not just be inert.
+  # The flag must actually gate the new behaviour, not just be inert. Without
+  # it the decoy is still the only candidate retrieved; its number and unit
+  # credit is now scaled down by the street mismatch, so it falls below the
+  # default min_score and is only visible with the cutoff lowered.
   old_behaviour <- gnaf_match(input, con, street_number_fallback = FALSE,
-                              cache = FALSE, verbose = FALSE)
+                              min_score = 0L, cache = FALSE, verbose = FALSE)
   expect_identical(old_behaviour$address_detail_pid, "HICKEY_DECOY")
+  expect_lt(old_behaviour$total_score, fixed$total_score)
 
   # An exact-number match must resolve without the new path changing anything.
   exact <- gnaf_match("23 William Street, Portsmith QLD 4870", con,
@@ -366,10 +374,12 @@ test_that("input ranges retrieve interior numbers in postcode, state and localit
                                 "30 RANGE ROAD, BRISBANE QLD 4000"),
               number_first = c(12L, 18L, 30L), number_last = c(NA_integer_, 25L, NA_integer_))]
   suppressMessages(gnaf_add(con, rows))
+  # With no postcode and no number agreement, the real street can earn at most
+  # suburb + street + type + flat, which is under the default cutoff of 60.
   out <- gnaf_match(c("10-20 Range Rd, Brisbane QLD 4000",
                       "10-20 Range Rd, Brisbane QLD",
                       "10-20 Range Rd, Brisbane QLD 4999"),
-                    con, max_results = 5L, cache = FALSE, verbose = FALSE)
+                    con, max_results = 5L, min_score = 50L, cache = FALSE, verbose = FALSE)
   for (id in 1:3) {
     matched <- out[input_id == id]
     # "QLD" (a same-postcode fixture row with an unrelated street and
@@ -386,7 +396,9 @@ test_that("input ranges retrieve interior numbers in postcode, state and localit
     # It's a genuine address on the correct street, correctly ranked last
     # via its honest score_number = 0.
     expected_pids <- c("RANGE", "INTERIOR", "OVERLAP", if (id == 2L) "OUTSIDE")
-    expected_numbers <- c(10L, 5L, 3L, if (id == 2L) 0L)
+    expected_numbers <- as.integer(round(
+      gnafr:::.default_match_weights()$number * c(1, 0.5, 0.3, if (id == 2L) 0)
+    ))
     expect_equal(matched$address_detail_pid, expected_pids)
     expect_equal(matched$score_number, expected_numbers)
   }
@@ -416,7 +428,7 @@ test_that("direction and suffixed unit numbers determine the winning candidate",
   out <- gnaf_match("Unit 2 10A Main Rd North, Brisbane QLD", con,
                     cache = FALSE, verbose = FALSE)
   expect_equal(out$address_detail_pid, "Z_CORRECT")
-  expect_equal(out$score_number, 10L)
+  expect_equal(out$score_number, as.integer(round(gnafr:::.default_match_weights()$number)))
 })
 
 test_that("matching units retain credit when level information is incomplete", {
@@ -433,7 +445,9 @@ test_that("matching units retain credit when level information is incomplete", {
                     con, max_results = 5L, cache = FALSE, verbose = FALSE)
   expect_equal(out$address_detail_pid,
                c("A", "Z_MISSING_LEVEL", "B_WRONG_LEVEL", "A2", "C_WRONG_UNIT"))
-  expect_equal(out$score_flat, c(5L, 4L, 3L, 2L, 2L))
+  expect_equal(out$score_flat, as.integer(round(
+    gnafr:::.default_match_weights()$flat * c(1, 0.8, 0.6, 0.5, 0.4)
+  )))
 })
 
 test_that("locality fallback respects custom component weights", {
@@ -451,4 +465,77 @@ test_that("locality fallback respects custom component weights", {
                     cache = FALSE, verbose = FALSE)
   expect_equal(out$address_detail_pid, "CORRECT")
   expect_equal(out$total_score, 94L)
+})
+
+# ---- Wrong street sharing the number/unit vs the right street at another number ----
+
+lag_street_row <- function(pid, number, street, flat = NA_character_) {
+  data.table(
+    address_detail_pid = pid,
+    address_label = sprintf("%s%d %s STREET, WEST END QLD 4101",
+                            if (is.na(flat)) "" else sprintf("UNIT %s ", flat), number, street),
+    number_first = as.integer(number),
+    flat_type = if (is.na(flat)) NA_character_ else "UNIT", flat_number = flat,
+    street_name = street, street_type = "STREET",
+    locality_name = "WEST END", state = "QLD", postcode = 4101L
+  )
+}
+
+test_that("a wrong street sharing the number and unit does not beat the right street at another number", {
+  # GNAF lag: 12 Smith Street isn't in GNAF yet, but Smith Street is, while
+  # Jones Street in the same suburb has a 12 (and a unit 5).
+  con <- gnaf_connect(":memory:")
+  on.exit(gnaf_disconnect(con), add = TRUE)
+  gnaf_init(con)
+  suppressMessages(gnaf_add(con, rbindlist(list(
+    lag_street_row("SMITH_2", 2L, "SMITH"), lag_street_row("SMITH_8", 8L, "SMITH"),
+    lag_street_row("SMITH_30", 30L, "SMITH"),
+    lag_street_row("JONES_12", 12L, "JONES"),
+    lag_street_row("JONES_12_5", 12L, "JONES", flat = "5")
+  ))))
+
+  out <- gnaf_match(c("12 Smith Street, West End QLD 4101",
+                      "Unit 5, 12 Smith Street, West End QLD 4101"),
+                    con, min_score = 50L, cache = FALSE, verbose = FALSE)
+  # The right street wins, at the nearest real house number (8, not 2 or 30).
+  expect_identical(out$address_detail_pid, c("SMITH_8", "SMITH_8"))
+  expect_identical(out$score_number, c(0L, 0L))
+
+  # The decoys are still candidates, but far behind: their number and unit
+  # credit is scaled by the street mismatch.
+  all <- gnaf_match("Unit 5, 12 Smith Street, West End QLD 4101", con,
+                    max_results = 10L, min_score = 0L, cache = FALSE, verbose = FALSE)
+  expect_identical(all$street_name[1:3], rep("SMITH", 3L))
+  jones <- all[street_name == "JONES"]
+  expect_gt(nrow(jones), 0L)
+  expect_true(all(jones$score_number <= 3L))
+  expect_true(all(jones$total_score < min(all[street_name == "SMITH", total_score])))
+
+  # Candidates on the right street are ordered by nearness to the number asked for.
+  ordered <- gnaf_match("12 Smith Street, West End QLD 4101", con,
+                        max_results = 3L, min_score = 50L, cache = FALSE, verbose = FALSE)
+  expect_identical(ordered$address_detail_pid, c("SMITH_8", "SMITH_2", "SMITH_30"))
+
+  # A number that does exist is unaffected.
+  exact <- gnaf_match("8 Smith Street, West End QLD 4101", con, cache = FALSE, verbose = FALSE)
+  expect_identical(exact$address_detail_pid, "SMITH_8")
+  expect_identical(exact$total_score, 100L)
+  expect_identical(exact$match_basis, "exact_components")
+})
+
+test_that("equally scored candidates are ordered by nearest house number, not by PID", {
+  con <- gnaf_connect(":memory:")
+  on.exit(gnaf_disconnect(con), add = TRUE)
+  gnaf_init(con)
+  # The far house has the lower PID, so a PID tie-break would return it first.
+  suppressMessages(gnaf_add(con, rbindlist(list(
+    lag_street_row("A_FAR", 300L, "SMITH"), lag_street_row("B_NEAR", 10L, "SMITH")
+  ))))
+  input <- "12 Smith Street, West End QLD 4101"
+  both <- gnaf_match(input, con, max_results = 2L, cache = FALSE, verbose = FALSE)
+  expect_identical(both$address_detail_pid, c("B_NEAR", "A_FAR"))
+  expect_identical(both$total_score[1L], both$total_score[2L])
+  one <- gnaf_match(input, con, max_results = 1L, cache = FALSE, verbose = FALSE)
+  expect_identical(one$address_detail_pid, "B_NEAR")
+  expect_false("number_distance" %in% names(both))
 })

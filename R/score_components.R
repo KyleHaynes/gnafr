@@ -145,7 +145,7 @@
   found
 }
 
-.score_number_sql <- function(weight, i, g) {
+.score_number_sql <- function(weight, i, g, gate = NULL) {
   # A lot is not a street number and may repeat along a street. Only use it
   # as the locating identifier when no street number was supplied.
   token <- .candidate_number_token_sql(g)
@@ -179,13 +179,13 @@
     " WHEN %1$s = '' OR %2$s = '' THEN 0.5 ELSE 0.0 END"
   ), i_suffix, g_suffix)
   sprintf(paste0(
-    "CAST(ROUND_EVEN(%g * (CASE WHEN %s IS NULL AND %s != '' THEN ",
+    "CAST(ROUND_EVEN(%g%s * (CASE WHEN %s IS NULL AND %s != '' THEN ",
     "CASE WHEN %s = %s THEN 1.0 ELSE 0.0 END ",
     "ELSE (%s) * (%s) END), 0) AS INTEGER)"
-  ), weight, i_first, i_lot, i_lot, g_lot, interval, suffix)
+  ), weight, .gate_factor_sql(gate), i_first, i_lot, i_lot, g_lot, interval, suffix)
 }
 
-.score_number <- function(pairs, weight) {
+.score_number <- function(pairs, weight, gate = 1) {
   token <- .candidate_number_token(pairs)
   token_first <- suppressWarnings(as.integer(sub("[^0-9].*$", "", token)))
   g_first <- pairs$number_first
@@ -210,7 +210,7 @@
   suffix <- data.table::fcase(i_suffix == g_suffix, 1, i_suffix == "" | g_suffix == "", 0.5, default = 0)
   i_lot <- .score_identifier_value(.pair_column(pairs, "in_lot_number"))
   g_lot <- .score_identifier_value(.pair_column(pairs, "lot_number"))
-  as.integer(round(weight * data.table::fifelse(
+  as.integer(round(weight * gate * data.table::fifelse(
     is.na(i_first) & i_lot != "", as.numeric(i_lot == g_lot), interval * suffix
   )))
 }
@@ -253,7 +253,7 @@
   )
 }
 
-.score_flat <- function(pairs, weight) {
+.score_flat <- function(pairs, weight, gate = 1) {
   value <- function(name) .score_value(.pair_column(pairs, name))
   i_flat <- .score_identifier_value(value("in_flat_number"))
   g_flat <- .score_identifier_value(value("flat_number"))
@@ -274,10 +274,10 @@
     level_present, level,
     default = 1
   )
-  as.integer(round(weight * fraction))
+  as.integer(round(weight * gate * fraction))
 }
 
-.score_flat_sql <- function(weight, i, g) {
+.score_flat_sql <- function(weight, i, g, gate = NULL) {
   value <- function(alias, name) .score_identifier_value_sql(paste0(alias, ".", name))
   i_flat <- value(i, "in_flat_number")
   g_flat <- value(g, "flat_number")
@@ -297,9 +297,9 @@
   flat_present <- sprintf("(%s != '' OR %s != '')", i_flat, g_flat)
   level_present <- sprintf("(%s != '' OR %s != '')", i_level, g_level)
   sprintf(paste0(
-    "CAST(ROUND_EVEN(%g * (CASE WHEN %s AND %s THEN 0.6 * (%s) + 0.4 * (%s)",
+    "CAST(ROUND_EVEN(%g%s * (CASE WHEN %s AND %s THEN 0.6 * (%s) + 0.4 * (%s)",
     " WHEN %s THEN (%s) WHEN %s THEN (%s) ELSE 1.0 END), 0) AS INTEGER)"
-  ), weight, flat_present, level_present, flat, level, flat_present, flat, level_present, level)
+  ), weight, .gate_factor_sql(gate), flat_present, level_present, flat, level, flat_present, flat, level_present, level)
 }
 
 # Shared shape for every "raw Jaro-Winkler similarity -> credit multiplier"
@@ -335,6 +335,37 @@
 
 .component_similarity_sql <- function(sim_expr) {
   .similarity_ramp_sql(sim_expr, .COMPONENT_SIM_LOW, .COMPONENT_SIM_HIGH, .COMPONENT_SIM_FLOOR)
+}
+
+# A house number or unit only locates an address *within* a street, so agreement
+# on either says nothing when the street itself differs. Their credit is scaled
+# by how well the street name agrees: 1 for the same street (or when either name
+# is missing, so there is no evidence to gate on), falling with the same name
+# similarity that drives score_street_name. Without this, a wrong street sharing
+# the number and unit (30 + 20 points) outranks the right street whose number is
+# simply absent from GNAF.
+.street_gate <- function(input, candidate) {
+  input <- .score_name_value(input)
+  candidate <- .score_name_value(candidate)
+  gate <- rep(1, length(input))
+  fuzzy <- nzchar(input) & nzchar(candidate) & input != candidate
+  if (any(fuzzy)) gate[fuzzy] <- .name_similarity_factor(input[fuzzy], candidate[fuzzy])
+  gate
+}
+
+# `similarity` is .name_similarity_sql() for the street names, which is exactly 0
+# only when a name is missing (a present but different name never falls below
+# its floor), so it doubles as the "no evidence" test without re-normalising.
+.street_gate_sql <- function(similarity) {
+  sprintf("(CASE WHEN %1$s = 0.0 THEN 1.0 ELSE %1$s END)", similarity)
+}
+
+# The gate multiplies the component's weight *inside* its single rounding
+# (ROUND_EVEN(weight * gate * fraction)). Rounding the score and then scaling
+# and rounding again nests ROUND_EVEN around these already-large CASE trees,
+# which makes DuckDB spend seconds optimising even a one-row query.
+.gate_factor_sql <- function(gate) {
+  if (is.null(gate)) "" else paste0(" * ", gate)
 }
 
 # Rounding must not promote an imperfect name to full agreement, even for

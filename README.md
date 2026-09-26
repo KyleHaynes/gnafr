@@ -70,6 +70,31 @@ reloads. The two paths are alternatives: pick one per database.
 
 ---
 
+### Smaller lookup tables for shared primary/secondary coordinates
+
+Pass `collapse_same_coordinates = TRUE` when loading to remove GNAF secondaries
+whose linked primary has exactly the same longitude and latitude:
+
+```r
+gnaf_build_db(con, "C:/temp/gnaf/Standard", states = "QLD",
+              collapse_same_coordinates = TRUE)
+# For Core CSV instead:
+gnaf_load(con, "C:/temp/gnaf.qld.csv", collapse_same_coordinates = TRUE)
+```
+
+The option also works on `gnaf_load_psv()` and defaults to `FALSE`. It removes
+aliases of collapsed secondaries, preserves the primary and its aliases, and
+leaves custom addresses and records with missing links or coordinates untouched.
+Coordinates must match exactly; unrelated addresses at the same point are retained.
+CSV loading applies it to all loaded GNAF rows; PSV loading applies it to each
+requested state. Indexes are rebuilt and the match cache is cleared automatically.
+
+This reduces the rows searched by matching, potentially improving lookup speed,
+but gives up unit-level detail and can change match scores or coverage. Reload the
+source files with the option off to restore removed records. To keep all records
+and only change the returned address, use `gnaf_match(return_primary = TRUE)`;
+that existing option does not reduce the lookup table or require equal coordinates.
+
 ## Matching addresses
 
 ```r

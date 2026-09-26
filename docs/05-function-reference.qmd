@@ -97,7 +97,7 @@ sample_gnaf(con, n = 2)
 ### `gnaf_load()` {#gnaf_load}
 
 ```r
-gnaf_load(con, path, overwrite = FALSE)
+gnaf_load(con, path, overwrite = FALSE, collapse_same_coordinates = FALSE)
 ```
 
 | Argument | Description |
@@ -105,6 +105,7 @@ gnaf_load(con, path, overwrite = FALSE)
 | `con` | DBI connection from `gnaf_connect()`. |
 | `path` | Character vector of one or more paths to G-NAF Core CSV files. |
 | `overwrite` | If `TRUE`, deletes existing G-NAF rows before loading. |
+| `collapse_same_coordinates` | If `TRUE`, removes secondaries whose linked GNAF primary has exactly the same finite coordinates, plus their aliases. Applies to all loaded GNAF rows after the batch. Default `FALSE` preserves unit detail; custom addresses are untouched. |
 
 Loads one or more G-NAF Core CSV files via DuckDB's native `read_csv` — the file is
 never pulled into R first. Duplicate PIDs are silently skipped unless `overwrite =
@@ -119,15 +120,18 @@ gnaf_load(con, c("C:/temp/gnaf.qld.csv", "C:/temp/gnaf.nsw.csv"))
 ### `gnaf_load_psv()` {#gnaf_load_psv}
 
 ```r
-gnaf_load_psv(con, gnaf_dir, overwrite = FALSE, load_aliases = TRUE)
+gnaf_load_psv(con, gnaf_dir, state = "QLD", overwrite = FALSE,
+              load_aliases = TRUE, collapse_same_coordinates = FALSE)
 ```
 
 | Argument | Description |
 |---|---|
 | `con` | DBI connection. The database must have been initialised with `gnaf_init()`. |
 | `gnaf_dir` | Path to the G-NAF Standard directory containing the `*_psv.psv` files (e.g. `"G-NAF MAY 2026/Standard"`). |
-| `overwrite` | If `TRUE`, deletes all existing `source = 'gnaf'` rows before loading. |
+| `state` | One or more state codes to load. Defaults to `"QLD"`. |
+| `overwrite` | If `TRUE`, deletes existing `source = 'gnaf'` rows for the requested states before loading. |
 | `load_aliases` | If `TRUE` (default), also loads official locality/street alias variants. |
+| `collapse_same_coordinates` | If `TRUE`, removes secondaries in each loaded state whose linked GNAF primary has exactly the same finite coordinates, plus their aliases. Default `FALSE`; custom addresses are untouched. Also available through `gnaf_build_db()`. |
 
 **Returns**, invisibly, the total number of G-NAF rows in the database after loading.
 An alternative to `gnaf_load()` for the full raw PSV product — see [CSV vs PSV](04-build-database.qmd) for when to prefer each.

@@ -15,9 +15,19 @@
 #' @param con DBI connection from \code{gnaf_connect}.
 #' @param path Character vector of one or more paths to GNAF CSV files.
 #' @param overwrite If \code{TRUE}, deletes existing GNAF rows before loading.
+#' @param collapse_same_coordinates If \code{TRUE}, remove GNAF secondary
+#'   addresses whose linked primary is present and has exactly the same finite
+#'   longitude and latitude, including aliases of those secondaries. Defaults
+#'   to \code{FALSE}, preserving unit-level detail. Missing links or coordinates
+#'   are retained; custom addresses are untouched. Applies to all GNAF rows
+#'   after the CSV batch loads, including previously loaded rows. Reload with
+#'   this option off to restore removed records. Matching then searches the
+#'   remaining addresses, so unit-level match scores and coverage may change.
 #' @return Invisibly, the total number of GNAF rows now in the database.
 #' @export
-gnaf_load <- function(con, path, overwrite = FALSE) {
+gnaf_load <- function(con, path, overwrite = FALSE,
+                      collapse_same_coordinates = FALSE) {
+  .validate_collapse_same_coordinates(collapse_same_coordinates)
   if (!is.character(path) || length(path) == 0L)
     stop("'path' must be a non-empty character vector")
 
@@ -94,6 +104,8 @@ gnaf_load <- function(con, path, overwrite = FALSE) {
     message("Done: ", p)
   }
 
+  if (collapse_same_coordinates) .collapse_gnaf_secondaries(con)
+
   n <- DBI::dbGetQuery(con, "SELECT COUNT(*) AS n FROM gnaf_addresses")$n
   message("Total GNAF addresses in database: ", format(n, big.mark = ","))
   message("Rebuilding locality index ...")
@@ -106,5 +118,44 @@ gnaf_load <- function(con, path, overwrite = FALSE) {
   .invalidate_match_cache(con)
   DBI::dbCommit(con)
   committed <- TRUE
+  invisible(n)
+}
+
+.validate_collapse_same_coordinates <- function(value) {
+  if (!is.logical(value) || length(value) != 1L || is.na(value))
+    stop("'collapse_same_coordinates' must be TRUE or FALSE", call. = FALSE)
+}
+
+# Called inside the loader transaction, before index rebuilds/cache invalidation.
+# Use the explicit relationship, never coordinates alone: unrelated dwellings
+# can share a geocode. UNION also terminates malformed cycles in alias links.
+.collapse_gnaf_secondaries <- function(con, state = NULL) {
+  state_filter <- if (is.null(state)) "" else "AND s.state = ?"
+  sql <- sprintf("
+    WITH RECURSIVE collapsed(address_detail_pid) AS (
+      SELECT s.address_detail_pid
+      FROM gnaf_addresses s
+      JOIN gnaf_addresses p ON p.address_detail_pid = s.primary_pid
+      WHERE s.source = 'gnaf' AND p.source = 'gnaf'
+        AND s.primary_secondary IN ('S', 'SECONDARY')
+        AND p.primary_secondary IN ('P', 'PRIMARY')
+        AND s.address_detail_pid <> p.address_detail_pid
+        AND isfinite(s.longitude) AND isfinite(s.latitude)
+        AND s.longitude = p.longitude AND s.latitude = p.latitude
+        %s
+      UNION
+      SELECT a.address_detail_pid
+      FROM gnaf_addresses a
+      JOIN collapsed c ON a.principal_pid = c.address_detail_pid
+      WHERE a.source = 'gnaf'
+        AND a.alias_principal IN ('A', 'ALIAS')
+    )
+    DELETE FROM gnaf_addresses
+    WHERE address_detail_pid IN (SELECT address_detail_pid FROM collapsed)
+  ", state_filter)
+  n <- if (is.null(state)) DBI::dbExecute(con, sql) else
+    DBI::dbExecute(con, sql, params = list(state))
+  message("Removed ", format(n, big.mark = ","),
+          " same-coordinate GNAF secondary/alias rows.")
   invisible(n)
 }

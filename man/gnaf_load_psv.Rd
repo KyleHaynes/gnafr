@@ -9,7 +9,8 @@ gnaf_load_psv(
   gnaf_dir,
   state = "QLD",
   overwrite = FALSE,
-  load_aliases = TRUE
+  load_aliases = TRUE,
+  collapse_same_coordinates = FALSE
 )
 }
 \arguments{
@@ -32,6 +33,13 @@ in the database are left untouched. Defaults to \code{FALSE}.}
 
 \item{load_aliases}{If \code{TRUE} (default), loads locality and street
 alias address variants in addition to the standard records.}
+
+\item{collapse_same_coordinates}{If \code{TRUE}, remove GNAF secondary
+addresses in each loaded state whose linked primary is present and has
+exactly the same finite longitude and latitude, including their aliases.
+Defaults to \code{FALSE}. Missing links or coordinates and custom addresses
+are retained. Reload with this option off to restore unit-level records.
+Matching searches the remaining addresses, so scores and coverage may change.}
 }
 \value{
 Invisibly, the total number of GNAF rows in the database after

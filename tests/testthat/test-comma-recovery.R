@@ -96,8 +96,10 @@ test_that("comma recovery improves component scores without repairing house numb
   expect_identical(out$input_raw, inputs)
   expect_identical(out$in_number_first, c(100L, 7L, 14L, 11L, 3745L, 517L))
   expect_identical(out$in_number_last, c(NA_integer_, 77L, 20L, NA_integer_, 379L, NA_integer_))
-  expect_identical(out$score_number, c(30L, 15L, 30L, 30L, 0L, 0L))
-  expect_identical(out$total_score[c(2L, 3L, 5L, 6L)], c(76L, 100L, 70L, 70L))
+  # Number credit is scaled by street agreement, so the truncated "THE STRA" keeps
+  # only part of the credit its contained 7-77 range would otherwise earn.
+  expect_identical(out$score_number, c(30L, 11L, 30L, 30L, 0L, 0L))
+  expect_identical(out$total_score[c(2L, 3L, 5L, 6L)], c(67L, 100L, 70L, 70L))
   expect_true(all(out$total_score[c(1L, 4L)] > 90L & out$total_score[c(1L, 4L)] < 100L))
   expect_true(all(out$score_suburb[c(1L, 4L)] < weights$suburb))
   expect_identical(out$in_locality[c(1L, 4L)], c("UBRLEIGH HEADS", "SUFRERS PARADISE"))

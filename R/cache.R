@@ -34,7 +34,9 @@
 # street type after a name ending in a compass word, such as LITTLE WEST.
 # v18: exact component identity outranks weighted agreement; a unique address
 # can be recovered across postcodes independently of the locality score.
-.CACHE_ALGORITHM_VERSION <- 18L
+# v19: number and flat credit is scaled by street-name agreement, and ties in
+# score go to the nearest house number - cached scores and winners are stale.
+.CACHE_ALGORITHM_VERSION <- 19L
 
 #' Show the current state of the match cache
 #'

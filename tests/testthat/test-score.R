@@ -137,21 +137,21 @@ test_that("wrong St vs Dr: correct Drive address beats unrelated Street", {
 
 test_that("exact number match scores full weight", {
   p <- make_pair("ROAD", "ROAD", in_number_first = 42L, number_first = 42L)
-  out <- gnafr:::.score_pairs(p)
+  out <- gnafr:::.score_pairs(p, legacy_weights)
   expect_equal(out$score_number, 10L)
 })
 
 test_that("number in range scores 70 pct", {
   p <- make_pair("ROAD", "ROAD",
                  in_number_first = 15L, number_first = 10L, number_last = 20L)
-  out <- gnafr:::.score_pairs(p)
+  out <- gnafr:::.score_pairs(p, legacy_weights)
   expect_equal(out$score_number, 7L)  # round(10 * 0.7) = 7
 })
 
 test_that("flat number match scores full weight; mismatch scores 0", {
   p_match <- make_pair("ROAD", "ROAD",
                        in_flat_number = "3", flat_number = "3")
-  out_match <- gnafr:::.score_pairs(p_match)
+  out_match <- gnafr:::.score_pairs(p_match, legacy_weights)
   expect_equal(out_match$score_flat, 5L)
 
   p_miss <- make_pair("ROAD", "ROAD",
@@ -172,9 +172,9 @@ test_that("flat and level identifiers retain independent evidence", {
   missing <- copy(full)
   missing[, level_number := NA_character_]
 
-  expect_equal(gnafr:::.score_pairs(full)$score_flat, 5L)
-  expect_equal(gnafr:::.score_pairs(conflict)$score_flat, 4L)
-  expect_equal(gnafr:::.score_pairs(missing)$score_flat, 4L)
+  expect_equal(gnafr:::.score_pairs(full, legacy_weights)$score_flat, 5L)
+  expect_equal(gnafr:::.score_pairs(conflict, legacy_weights)$score_flat, 4L)
+  expect_equal(gnafr:::.score_pairs(missing, legacy_weights)$score_flat, 4L)
 })
 
 test_that("GNAF's own flat/level type codes score as full agreement, not a type conflict", {
@@ -202,7 +202,7 @@ test_that("GNAF's own flat/level type codes score as full agreement, not a type 
     p <- make_pair("ROAD", "ROAD",
                    in_flat_number = "5", flat_number = "5",
                    in_flat_type = case[["input"]], flat_type = case[["candidate"]])
-    expect_equal(gnafr:::.score_pairs(p)$score_flat, 5L, info = case[["candidate"]])
+    expect_equal(gnafr:::.score_pairs(p, legacy_weights)$score_flat, 5L, info = case[["candidate"]])
   }
 
   # Genuinely different categories must still conflict - the fix must not
@@ -210,7 +210,7 @@ test_that("GNAF's own flat/level type codes score as full agreement, not a type 
   wrong <- make_pair("ROAD", "ROAD",
                      in_flat_number = "5", flat_number = "5",
                      in_flat_type = "WAREHOUSE", flat_type = "SHOP")
-  expect_equal(gnafr:::.score_pairs(wrong)$score_flat, 2L)
+  expect_equal(gnafr:::.score_pairs(wrong, legacy_weights)$score_flat, 2L)
 })
 
 test_that("GNAF's own level type codes (especially 'L') score as full agreement", {
@@ -221,7 +221,7 @@ test_that("GNAF's own level type codes (especially 'L') score as full agreement"
     p <- make_pair("ROAD", "ROAD",
                    in_level_number = "3", level_number = "3",
                    in_level_type = input_word, level_type = candidate_code)
-    expect_equal(gnafr:::.score_pairs(p)$score_flat, 5L, info = candidate_code)
+    expect_equal(gnafr:::.score_pairs(p, legacy_weights)$score_flat, 5L, info = candidate_code)
   }
 })
 
@@ -253,7 +253,7 @@ test_that("a matching lot cannot override a conflicting explicit street number",
   expect_equal(gnafr:::.score_pairs(p)$score_number, 0L)
   expect_lt(p$total_score, 100L)
   p[, in_number_first := NA_integer_]
-  expect_equal(gnafr:::.score_pairs(p)$score_number, 10L)
+  expect_equal(gnafr:::.score_pairs(p, legacy_weights)$score_number, 10L)
   p[, lot_number := "8"]
   expect_equal(gnafr:::.score_pairs(p)$score_number, 0L)
 })
@@ -287,13 +287,13 @@ test_that("R and DuckDB score expressions remain component-identical", {
 
 test_that("postcode +-1/+-2/+-3 score partial credit; >+-3 scores 0", {
   p1 <- make_pair("ROAD", "ROAD", in_postcode = 4000L, postcode = 4001L)
-  expect_equal(gnafr:::.score_pairs(p1)$score_postcode, 14L)  # round(20 * 0.7)
+  expect_equal(gnafr:::.score_pairs(p1, legacy_weights)$score_postcode, 14L)  # round(20 * 0.7)
 
   p2 <- make_pair("ROAD", "ROAD", in_postcode = 4000L, postcode = 4002L)
-  expect_equal(gnafr:::.score_pairs(p2)$score_postcode, 8L)   # round(20 * 0.4)
+  expect_equal(gnafr:::.score_pairs(p2, legacy_weights)$score_postcode, 8L)   # round(20 * 0.4)
 
   p3 <- make_pair("ROAD", "ROAD", in_postcode = 4000L, postcode = 4003L)
-  expect_equal(gnafr:::.score_pairs(p3)$score_postcode, 4L)   # round(20 * 0.2)
+  expect_equal(gnafr:::.score_pairs(p3, legacy_weights)$score_postcode, 4L)   # round(20 * 0.2)
 
   p4 <- make_pair("ROAD", "ROAD", in_postcode = 4000L, postcode = 4005L)
   expect_equal(gnafr:::.score_pairs(p4)$score_postcode, 0L)
@@ -352,11 +352,11 @@ test_that("number scoring distinguishes exact, contained and overlapping ranges"
   pairs <- make_pair("ROAD", "ROAD", number_first = c(10L, 10L, 12L, 18L, 30L),
                      number_last = c(20L, 30L, NA_integer_, 25L, 40L))
   pairs[, in_number_last := 20L]
-  expect_equal(gnafr:::.score_pairs(pairs)$score_number, c(10L, 7L, 5L, 3L, 0L))
+  expect_equal(gnafr:::.score_pairs(pairs, legacy_weights)$score_number, c(10L, 7L, 5L, 3L, 0L))
 
   # The first point in a candidate range is still only a contained address.
   single <- make_pair("ROAD", "ROAD", number_first = 10L, number_last = 20L)
-  expect_equal(gnafr:::.score_pairs(single)$score_number, 7L)
+  expect_equal(gnafr:::.score_pairs(single, legacy_weights)$score_number, 7L)
 })
 
 test_that("number suffixes follow the house number after unit and building prefixes", {
@@ -374,11 +374,11 @@ test_that("number suffixes follow the house number after unit and building prefi
   # Row 5 (no address_label at all) can't recover a candidate suffix to
   # compare against - missing evidence, not a conflict, so it lands on the
   # same 50% tier as an unrecoverable suffix anywhere else in this file.
-  expect_equal(gnafr:::.score_pairs(pairs)$score_number, c(10L, 10L, 0L, 0L, 5L))
+  expect_equal(gnafr:::.score_pairs(pairs, legacy_weights)$score_number, c(10L, 10L, 0L, 0L, 5L))
 
   pairs <- pairs[1L]
   pairs[, in_number_suffix := NA_character_]
-  expect_equal(gnafr:::.score_pairs(pairs)$score_number, 5L)
+  expect_equal(gnafr:::.score_pairs(pairs, legacy_weights)$score_number, 5L)
 })
 
 test_that("a candidate with no recoverable suffix doesn't score worse than one with no suffix info at all", {
@@ -398,7 +398,10 @@ test_that("a candidate with no recoverable suffix doesn't score worse than one w
   no_suffix <- copy(base)
   with_suffix <- copy(base)[, in_number_suffix := "A"]
 
-  scored <- gnafr:::.score_pairs(rbindlist(list(no_suffix, with_suffix)))
+  # The street names differ on purpose (the input omits "HICKEY"); this test is
+  # about the suffix, so score the raw number agreement without the street gate.
+  scored <- gnafr:::.score_pairs(rbindlist(list(no_suffix, with_suffix)), legacy_weights,
+                                 street_gate = FALSE)
   expect_equal(scored$score_number, c(10L, 5L))
   expect_equal(scored$total_score[2L], scored$total_score[1L] - 5L)
 })
@@ -415,16 +418,16 @@ test_that("directions distinguish matching, missing and conflicting streets", {
 test_that("missing subaddress evidence ranks between agreement and conflict", {
   pairs <- make_pair("ROAD", "ROAD", in_flat_number = "2", flat_number = "2",
                      in_level_number = "3", level_number = c("3", NA, "4"))
-  expect_equal(gnafr:::.score_pairs(pairs)$score_flat, c(5L, 4L, 3L))
+  expect_equal(gnafr:::.score_pairs(pairs, legacy_weights)$score_flat, c(5L, 4L, 3L))
   pairs <- make_pair("ROAD", "ROAD", in_flat_number = "2", flat_number = c("2", NA, "4"))
-  expect_equal(gnafr:::.score_pairs(pairs)$score_flat, c(5L, 2L, 0L))
+  expect_equal(gnafr:::.score_pairs(pairs, legacy_weights)$score_flat, c(5L, 2L, 0L))
   # Case and surrounding whitespace do not change alphanumeric identifiers.
   pairs <- make_pair("ROAD", "ROAD", in_flat_number = " 2a ", flat_number = "2A")
-  expect_equal(gnafr:::.score_pairs(pairs)$score_flat, 5L)
+  expect_equal(gnafr:::.score_pairs(pairs, legacy_weights)$score_flat, 5L)
   pairs[, `:=`(in_flat_type = "APARTMENT", flat_type = "UNIT",
                 in_level_number = "3", level_number = "3",
                 in_level_type = "FLOOR", level_type = "LEVEL")]
-  expect_equal(gnafr:::.score_pairs(pairs)$score_flat, 5L)
+  expect_equal(gnafr:::.score_pairs(pairs, legacy_weights)$score_flat, 5L)
 })
 
 test_that("granular SQL and R scores agree for missing inputs and custom weights", {
@@ -543,7 +546,7 @@ test_that("postcode transpositions receive limited credit without rewarding arbi
   pairs <- make_pair("ROAD", "ROAD",
     in_postcode = c(4067L, 4067L, 4067L, 4067L, 800L, NA_integer_),
     postcode = c(4076L, 4607L, 4007L, 4608L, 8000L, 4067L))
-  expect_identical(gnafr:::.score_pairs(pairs)$score_postcode, c(8L, 8L, 0L, 0L, 0L, 0L))
+  expect_identical(gnafr:::.score_pairs(pairs, legacy_weights)$score_postcode, c(8L, 8L, 0L, 0L, 0L, 0L))
 })
 
 test_that("street type aliases agree but different known types and directions conflict", {
@@ -557,13 +560,13 @@ test_that("zero-padded identifiers agree without confusing different units or lo
   pairs <- make_pair("ROAD", "ROAD",
     in_flat_number = c("003", "003A", "003A", "003", "A003", "000"),
     flat_number = c("3", "3A", "3B", "30", "A3", "0"))
-  expect_identical(gnafr:::.score_pairs(pairs)$score_flat, c(5L, 5L, 0L, 0L, 0L, 5L))
+  expect_identical(gnafr:::.score_pairs(pairs, legacy_weights)$score_flat, c(5L, 5L, 0L, 0L, 0L, 5L))
   lots <- make_pair("ROAD", "ROAD", in_number_first = NA_integer_,
                     in_lot_number = c("007", "007A", "007A"),
                     lot_number = c("7", "7A", "7B"))
-  expect_identical(gnafr:::.score_pairs(lots)$score_number, c(10L, 10L, 0L))
+  expect_identical(gnafr:::.score_pairs(lots, legacy_weights)$score_number, c(10L, 10L, 0L))
   levels <- make_pair("ROAD", "ROAD", in_level_number = "003", level_number = "3")
-  expect_identical(gnafr:::.score_pairs(levels)$score_flat, 5L)
+  expect_identical(gnafr:::.score_pairs(levels, legacy_weights)$score_flat, 5L)
 })
 
 test_that("all six metric buckets agree in R and SQL across missing values and custom weights", {
@@ -588,10 +591,102 @@ test_that("all six metric buckets agree in R and SQL across missing values and c
     sql <- paste(sprintf("%s AS %s", expressions, names(expressions)), collapse = ", ")
     actual <- as.data.table(DBI::dbGetQuery(con, paste("SELECT", sql, "FROM metric_pairs p")))
     expected <- gnafr:::.score_pairs(copy(pairs), weights)
-    expect_equal(actual, expected[, names(expressions), with = FALSE])
+    # The street gate scales number and flat by a name similarity, and R's and
+    # DuckDB's Jaro-Winkler differ slightly on some pairs (the coarser street-name
+    # rounding hides it), so an inexact street can move those two by a point.
+    # Everything else, and every row whose street agrees or is missing, is exact.
+    ungated <- gnafr:::.street_gate(pairs$in_street_name, pairs$street_name) == 1
+    exact_cols <- setdiff(names(expressions), c("score_number", "score_flat"))
+    expect_equal(actual[, exact_cols, with = FALSE], expected[, exact_cols, with = FALSE])
+    for (col in c("score_number", "score_flat")) {
+      expect_identical(actual[[col]][ungated], expected[[col]][ungated])
+      expect_lte(max(abs(actual[[col]] - expected[[col]])), 1L)
+    }
     expect_true(all(vapply(actual, is.integer, logical(1L))))
     expect_true(all(as.matrix(actual) >= 0L))
-    expect_identical(expected$total_score, as.integer(rowSums(actual)))
+    expect_identical(expected$total_score[ungated], as.integer(rowSums(actual))[ungated])
+    expect_lte(max(abs(expected$total_score - rowSums(actual))), 2L)
   }
   expect_identical(gnafr:::.score_pairs(pairs[0L])$total_score, integer())
+})
+
+# ---- Street gate: number and flat credit is conditional on the street --------
+
+test_that("number and flat credit is scaled by how well the street agrees", {
+  w <- gnafr:::.default_match_weights()
+  identical_street <- make_pair("ROAD", "ROAD", in_flat_number = "3", flat_number = "3")
+  different_street <- make_pair("ROAD", "ROAD", in_street_name = "MAPLE", street_name = "OAK",
+                                in_flat_number = "3", flat_number = "3")
+  typo_street <- make_pair("ROAD", "ROAD", in_street_name = "ILLAWON", street_name = "ILLAWONG",
+                           in_flat_number = "3", flat_number = "3")
+  out <- gnafr:::.score_pairs(rbindlist(list(identical_street, different_street, typo_street)))
+
+  # Same street: full credit for the matching number and unit.
+  expect_identical(out$score_number[1L], as.integer(w$number))
+  expect_identical(out$score_flat[1L], as.integer(w$flat))
+  # A different street sharing the number and unit earns almost nothing for them.
+  expect_lt(out$score_number[2L], 0.1 * w$number)
+  expect_lt(out$score_flat[2L], 0.1 * w$flat)
+  # A near-miss spelling keeps most of it, but not all.
+  expect_gt(out$score_number[3L], 0.7 * w$number)
+  expect_lt(out$score_number[3L], w$number)
+  expect_gt(out$score_flat[3L], 0.7 * w$flat)
+  expect_lt(out$score_flat[3L], w$flat)
+})
+
+test_that("the street gate stays open when either street name is missing", {
+  w <- gnafr:::.default_match_weights()
+  pairs <- rbindlist(list(
+    make_pair("ROAD", "ROAD", in_street_name = NA_character_),
+    make_pair("ROAD", "ROAD", street_name = NA_character_),
+    make_pair("ROAD", "ROAD", in_street_name = " ", street_name = "MAIN")
+  ))
+  out <- gnafr:::.score_pairs(pairs)
+  expect_identical(out$score_number, rep(as.integer(w$number), 3L))
+  expect_identical(gnafr:::.street_gate(c(NA, "", "A"), c("MAIN", "MAIN", NA)), c(1, 1, 1))
+})
+
+test_that("street_gate = FALSE returns the raw number and flat agreement", {
+  w <- gnafr:::.default_match_weights()
+  wrong <- make_pair("ROAD", "ROAD", in_street_name = "MAPLE", street_name = "OAK",
+                     in_flat_number = "3", flat_number = "3")
+  raw <- gnafr:::.score_pairs(copy(wrong), street_gate = FALSE)
+  expect_identical(raw$score_number, as.integer(w$number))
+  expect_identical(raw$score_flat, as.integer(w$flat))
+  # It changes nothing else, and the total is still the sum of its components.
+  gated <- gnafr:::.score_pairs(copy(wrong))
+  expect_identical(raw$score_street_name, gated$score_street_name)
+  expect_equal(gated$total_score, gated$score_postcode + gated$score_suburb +
+    gated$score_street_name + gated$score_street_type + gated$score_number + gated$score_flat)
+})
+
+test_that("the DuckDB scorer gates number and flat credit by street agreement", {
+  w <- gnafr:::.default_match_weights()
+  pairs <- rbindlist(list(
+    make_pair("ROAD", "ROAD", in_flat_number = "3", flat_number = "3"),
+    make_pair("ROAD", "ROAD", in_street_name = "MAPLE", street_name = "OAK",
+              in_flat_number = "3", flat_number = "3"),
+    make_pair("ROAD", "ROAD", in_street_name = NA_character_, in_flat_number = "3",
+              flat_number = "3")
+  ))
+  con <- gnaf_connect(":memory:")
+  on.exit(gnaf_disconnect(con), add = TRUE)
+  duckdb::duckdb_register(con, "gate_pairs", pairs)
+  on.exit(duckdb::duckdb_unregister(con, "gate_pairs"), add = TRUE)
+  expr <- gnafr:::.score_sql_exprs(w, i = "p", g = "p")
+  sql <- paste(sprintf("%s AS %s", expr, names(expr)), collapse = ", ")
+  actual <- as.data.table(DBI::dbGetQuery(con, paste("SELECT", sql, "FROM gate_pairs p")))
+  expect_identical(actual$score_number[c(1L, 3L)], rep(as.integer(w$number), 2L))
+  expect_identical(actual$score_flat[c(1L, 3L)], rep(as.integer(w$flat), 2L))
+  expect_lt(actual$score_number[2L], 0.1 * w$number)
+  expect_lt(actual$score_flat[2L], 0.1 * w$flat)
+  # An explicit gate column (as the bulk query supplies) gives the same scores.
+  pairs[, street_gate := c(1, 0.5, 1)]
+  duckdb::duckdb_register(con, "gate_pairs2", pairs)
+  on.exit(duckdb::duckdb_unregister(con, "gate_pairs2"), add = TRUE)
+  expr2 <- gnafr:::.score_sql_exprs(w, i = "p", g = "p", street_gate = "p.street_gate")
+  sql2 <- paste(sprintf("%s AS %s", expr2, names(expr2)), collapse = ", ")
+  half <- as.data.table(DBI::dbGetQuery(con, paste("SELECT", sql2, "FROM gate_pairs2 p")))
+  expect_identical(half$score_number, as.integer(round(w$number * c(1, 0.5, 1))))
+  expect_identical(half$score_flat, as.integer(round(w$flat * c(1, 0.5, 1))))
 })
