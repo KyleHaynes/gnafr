@@ -1,5 +1,23 @@
 # gnafr 0.0.4
 
+## Address parsing
+
+- Suburbs that begin or end with a street-type word are no longer split across the
+  street type. `19 EXCALIBUR CT PARADISE, POINT QLD 4216` (and the same input with no
+  comma, or with `COURT` spelt out) parsed as street type `PARADISE`, locality `POINT`;
+  it now gives street `EXCALIBUR`, type `COURT`, locality `PARADISE POINT`, the same as
+  the comma-in-the-right-place form. A comma that lands inside the suburb name is
+  repaired when the word before it is a suburb word following a street type.
+- `PARADISE`, `LOOKOUT`, `DOWNS`, `RANGE`, `BRANCH`, `ESTATE`, `RIDGE`, `COVE`,
+  `HARBOUR`, `GAP`, `RESERVE`, `GARDENS`, `POCKET`, `LANDING`, `GRANGE`, `NEST`, `FLAT`
+  and `JUNCTION` are now treated as likely suburb words when a street type comes
+  before them (`Surfers Paradise`, `Point Lookout`, `Bracken Ridge`, `The Gap`).
+  Chosen against every distinct QLD street/suburb pair: of ~112,500 comma-less
+  inputs rebuilt from GNAF components, fully correct parses rise from 97.1% to
+  98.5% with none made worse (`CORNER` was tried and left out because it is a real
+  street type, as in `Blue Hills Corner`). Across all 5,967 QLD suburbs, 150 more
+  now parse correctly and none regress. Older match-cache entries are ignored.
+
 ## Matching
 
 - Number and unit credit is now conditional on the street agreeing. A house number

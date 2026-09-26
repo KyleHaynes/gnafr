@@ -1167,7 +1167,7 @@ WHERE r.match_rank <= %d
 
 # Recovers a locality that address_parse() lost because, with no comma to
 # mark the street/suburb boundary, its rightmost apparent street-type word
-# was actually part of the suburb name (e.g. "Point Lookout" - LOOKOUT is a
+# was actually part of the suburb name (e.g. "Edge Hill" - EDGE is a
 # legitimate street type; .LOCALITY_COLLISION_WORDS in R/parse.R already
 # handles some of these, but it's a fixed word list checked without any
 # database access, so it can't be complete, and its "search one word further
