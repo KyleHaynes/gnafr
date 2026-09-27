@@ -1,3 +1,20 @@
+# gnafr 0.0.5
+
+## Data loading
+
+- New `gnaf_load_pli()` adds the Queensland Property Location Index (PLI) to a built database, as
+  an extra step after `gnaf_build_db()`. Only addresses whose label G-NAF does not already have are
+  added (as principal rows with `source = "pli"` and PIDs `PLI<address_pid>`); the summary it
+  prints and returns says how many were already in G-NAF and how many were added, as counts and
+  percentages. The PLI is wrangled the way G-NAF is: labels are built by the G-NAF loader's own
+  code, a lot is used only when there is no street number, unit and street-number suffixes are
+  kept, street directions become G-NAF's codes, the state is `QLD`, postcodes are imputed from
+  G-NAF, and coordinates are converted from GDA94 to GDA2020 (with a check against G-NAF's own
+  points). Two addresses that differ only by building name, or by `UNIT` against `SHOP`/`SUITE`,
+  count as the same address. On a Queensland database and the 26 September 2026 extract, 95.5% of
+  the PLI was already in G-NAF and 124,039 addresses (4.4%) were added. See `Adding PLI.md`.
+
+
 # gnafr 0.0.4
 
 ## Address parsing

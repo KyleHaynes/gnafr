@@ -144,6 +144,34 @@ An alternative to `gnaf_load()` for the full raw PSV product — see [CSV vs PSV
 gnaf_load_psv(con, "C:/temp/gnaf/G-NAF/G-NAF MAY 2026/Standard")
 ```
 
+### `gnaf_load_pli()` {#gnaf_load_pli}
+
+```r
+gnaf_load_pli(con, path, overwrite = FALSE, address_status = c("P", "A"),
+              include_deleted_lotplans = FALSE, verbose = TRUE)
+```
+
+| Argument | Description |
+|---|---|
+| `con` | DBI connection, opened for writing, to a database that already holds Queensland G-NAF. |
+| `path` | The Queensland Property Location Index download (`DP_PROP_LOCATION_INDEX_QLD.zip`) or the `.txt` inside it. |
+| `overwrite` | If `TRUE`, removes PLI rows from an earlier load (`source = "pli"`) first. |
+| `address_status` | PLI address statuses to consider; `"P"` and `"A"` by default. |
+| `include_deleted_lotplans` | If `TRUE`, also consider addresses on a lot on plan flagged `D`. Default `FALSE`. |
+| `verbose` | If `TRUE` (default), print progress and the summary. |
+
+Adds the PLI addresses that G-NAF does not already have (compared by label), wrangled as
+G-NAF's are: G-NAF-style labels, lot used only when there is no street number, street
+and unit suffixes retained, state imputed as `QLD`, postcode imputed from G-NAF and
+coordinates converted from GDA94 to GDA2020. Added rows have `source = "pli"` and PIDs
+`PLI<address_pid>`. **Returns**, invisibly, a table of what happened to the PLI records:
+how many were already in G-NAF and how many were added, each as `n` and `pct`. Walkthrough
+and wrangling rules: `Adding PLI.md` in the repository root.
+
+```r
+gnaf_load_pli(con, "C:/Users/me/Downloads/DP_PROP_LOCATION_INDEX_QLD.zip")
+```
+
 ## Schema maintenance
 
 ### `gnaf_canonicalize_street_types()` {#gnaf_canonicalize_street_types}

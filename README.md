@@ -95,6 +95,21 @@ source files with the option off to restore removed records. To keep all records
 and only change the returned address, use `gnaf_match(return_primary = TRUE)`;
 that existing option does not reduce the lookup table or require equal coordinates.
 
+### Adding Queensland's Property Location Index (PLI)
+
+G-NAF lags new development. The Queensland Government's Property Location Index
+carries addresses G-NAF does not have yet, and `gnaf_load_pli()` adds them as an extra
+step after the database is built:
+
+```r
+gnaf_load_pli(con, "C:/temp/DP_PROP_LOCATION_INDEX_QLD.zip")
+```
+
+Only addresses whose label G-NAF does not already have are added (with G-NAF-style
+labels, GDA2020 coordinates, and a `source` of `"pli"`), and a summary reports how many
+were already in G-NAF and how many were added. See [Adding PLI.md](Adding%20PLI.md) for
+where to download the data and exactly how it is wrangled.
+
 ## Matching addresses
 
 ```r
@@ -392,7 +407,7 @@ Other things worth ruling out on a machine that crashes:
 | Task | Functions |
 |---|---|
 | Connect & setup | `gnaf_connect()`, `gnaf_disconnect()`, `gnaf_init()`, `gnaf_status()`, `sample_gnaf()` |
-| Load G-NAF | `gnaf_build_db()`, `gnaf_load_psv()` (Standard), `gnaf_load()` (Core CSV) |
+| Load G-NAF | `gnaf_build_db()`, `gnaf_load_psv()` (Standard), `gnaf_load()` (Core CSV), `gnaf_load_pli()` (Queensland PLI, see [Adding PLI.md](Adding%20PLI.md)) |
 | Match | `gnaf_match()`, `gnaf_text_scores()`, `gnaf_match_features()` |
 | Parse | `address_parse()` |
 | Custom addresses | `gnaf_add()`, `gnaf_remove_custom()` |
