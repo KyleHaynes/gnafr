@@ -26,6 +26,18 @@
 #'         (e.g. the street name itself needs fuzzy resolution).
 #' }
 #'
+#' Inputs that already read like GNAF labels skip all of this. When the database
+#' has an exact-label index (built by \code{\link{gnaf_load}},
+#' \code{\link{gnaf_load_psv}} or \code{\link{gnaf_rebuild_exact_index}}), each
+#' input is first reduced to a key (upper case, commas and full stops removed,
+#' whitespace collapsed) and looked up directly. An input that names exactly one
+#' principal address, by its label or by a common written variant of it (a
+#' shortened flat word or street type, \code{5/12} unit notation, or no state),
+#' is matched on the spot: it is not parsed, standardised or scored, and is
+#' returned with every component at full weight and
+#' \code{match_basis = "exact_components"}. On large batches of clean addresses
+#' this is many times faster than the full pipeline. See Details.
+#'
 #' @param con DBI connection from \code{gnaf_connect}.
 #' @param addresses Character vector of address strings.
 #' @param max_results Maximum number of matches to return per input.
@@ -113,6 +125,22 @@
 #'   house number is nearest the one requested, then to the lowest PID.
 #'   \code{total_score} sums the gated components, while [gnaf_match_features()]
 #'   still reports raw agreement.
+#'
+#'   The exact-label index is used only when it cannot change the answer:
+#'   \code{max_results = 1}, and \code{alias_types} either unset or including
+#'   \code{NA} (only principal addresses are indexed, so an alias label never
+#'   shadows the address that owns it). A key that would name more than one
+#'   address, or that is also the label of a custom address, is left to the full
+#'   pipeline, as is any input the index does not contain; the written variants
+#'   are ignored when \code{normalize = FALSE}. For an input answered this way
+#'   \code{input_standardised} is the matched GNAF label, the parsed \code{in_*}
+#'   columns describe the matched address (normalised as the parser would), and a
+#'   lot-only label is reported as \code{exact_components}. The index is ignored
+#'   if \code{gnaf_addresses} has changed since it was built, so a stale index can
+#'   never name the wrong address; rebuild it with
+#'   \code{\link{gnaf_rebuild_exact_index}} after modifying the table yourself.
+#'   Inputs answered by the index are not written to the match cache, since they
+#'   never consult it.
 #'
 #'   Street directions qualify the street-type score: agreement keeps full
 #'   credit, a missing direction halves it, and conflicting directions score
@@ -252,16 +280,59 @@ gnaf_match <- function(addresses, con, max_results = 1L, min_score = 60L,
   total_timer <- proc.time()[["elapsed"]]
   address_count <- length(addresses)
   address_word <- if (address_count == 1L) "address" else "addresses"
-  .cli_match_step(
-    verbose,
-    sprintf(
-      "Parsing %s %s.",
-      cli::col_blue(format(address_count, big.mark = ",")),
-      address_word
+
+  # ------------------------------------------------------------------
+  # Fast path 0: exact-label index. An input that is (case, commas and the
+  # common written variants aside) a GNAF label needs no parsing, standardising
+  # or scoring - the index names the address directly. Only one result per
+  # input is ever complete this way, and only principal rows are indexed, so
+  # the path is used just when neither can change the answer.
+  # ------------------------------------------------------------------
+  index_usable <- max_results == 1L && (is.null(alias_types) || anyNA(alias_types))
+  index_state <- if (index_usable) .exact_index_state(con) else NULL
+  fast <- NULL
+  fast_elapsed <- 0
+  if (!is.null(index_state)) {
+    .cli_match_step(
+      verbose,
+      sprintf(
+        "Looking up %s %s in the exact-label index.",
+        cli::col_blue(format(address_count, big.mark = ",")),
+        address_word
+      )
     )
-  )
+    fast_timer <- proc.time()[["elapsed"]]
+    fast <- .exact_index_match(
+      con, addresses, index_state, include_custom, min_score, weights, normalize
+    )
+    fast_elapsed <- proc.time()[["elapsed"]] - fast_timer
+    .cli_match_detail(verbose, sprintf(
+      "%s input(s) matched via the exact-label index in %s (parsing skipped).",
+      cli::col_green(format(length(fast$ids), big.mark = ",")),
+      cli::col_cyan(sprintf("%.2fs", fast_elapsed))
+    ))
+  } else if (isTRUE(verbose) && address_count >= 20000L) {
+    .cli_match_detail(verbose, paste0(
+      "Tip: gnaf_rebuild_exact_index(con) builds an index that matches inputs ",
+      "already in GNAF label form without parsing them (needs a writable ",
+      "connection); none is available for this call."
+    ))
+  }
+  fast_ids <- fast$ids %||% integer(0L)
+  rest_idx <- if (length(fast_ids) > 0L) seq_len(address_count)[-fast_ids] else
+    seq_len(address_count)
+
+  if (length(rest_idx) > 0L)
+    .cli_match_step(
+      verbose,
+      sprintf(
+        "Parsing %s %s.",
+        cli::col_blue(format(length(rest_idx), big.mark = ",")),
+        if (length(rest_idx) == 1L) "address" else "addresses"
+      )
+    )
   parse_timer <- proc.time()[["elapsed"]]
-  parsed <- address_parse(addresses, normalize = normalize)
+  parsed <- address_parse(addresses[rest_idx], normalize = normalize)
   parse_elapsed <- proc.time()[["elapsed"]] - parse_timer
 
   # address_parse() has no database access, so when a comma-less address's
@@ -273,18 +344,31 @@ gnaf_match <- function(addresses, con, max_results = 1L, min_score = 60L,
   # locality guessing that flag already controls.
   if (isTRUE(locality_fallback)) .recover_missing_locality(con, parsed)
 
-  .cli_match_step(verbose, "Standardising parsed input addresses.")
+  if (length(rest_idx) > 0L)
+    .cli_match_step(verbose, "Standardising parsed input addresses.")
   standardise_timer <- proc.time()[["elapsed"]]
   parsed[, input_standardised := .standardise_input(parsed)]
   standardise_elapsed <- proc.time()[["elapsed"]] - standardise_timer
-  .cli_match_detail(verbose, sprintf(
-    "Input standardisation completed in %s.",
-    cli::col_cyan(sprintf("%.2fs", standardise_elapsed))
-  ))
+  if (length(rest_idx) > 0L)
+    .cli_match_detail(verbose, sprintf(
+      "Input standardisation completed in %s.",
+      cli::col_cyan(sprintf("%.2fs", standardise_elapsed))
+    ))
+
+  # Everything below that still needs matching works on `slow_parsed`; `parsed`
+  # additionally carries the inputs the index resolved, in input order.
+  parsed[, input_id := rest_idx[input_id]]
+  slow_parsed <- parsed
+  if (!is.null(fast)) {
+    parsed <- rbindlist(list(fast$parsed, parsed), use.names = TRUE, fill = TRUE)
+    setorder(parsed, input_id)
+  }
 
   verbose_stats <- list(
     parse_elapsed = parse_elapsed,
     standardise_elapsed = standardise_elapsed,
+    fast_inputs = length(fast_ids),
+    fast_elapsed = fast_elapsed,
     exact_inputs = 0L,
     exact_elapsed = 0,
     cache_inputs = 0L,
@@ -296,7 +380,7 @@ gnaf_match <- function(addresses, con, max_results = 1L, min_score = 60L,
 
   results    <- list()
   diagnostics <- list()
-  skip_ids   <- integer(0L)
+  skip_ids   <- fast_ids
 
   # ------------------------------------------------------------------
   # Fast path 1: exact address_label match
@@ -304,13 +388,13 @@ gnaf_match <- function(addresses, con, max_results = 1L, min_score = 60L,
   # Ideal for re-processing previously matched/standardised output.
   # ------------------------------------------------------------------
   exact_timer <- proc.time()[["elapsed"]]
-  raw_is_standard <- toupper(trimws(.repair_address_encoding(parsed$input_raw))) ==
-    parsed$input_standardised
-  use_exact_label_path <- nrow(parsed) <= 100L ||
+  raw_is_standard <- toupper(trimws(.repair_address_encoding(slow_parsed$input_raw))) ==
+    slow_parsed$input_standardised
+  use_exact_label_path <- nrow(slow_parsed) <= 100L ||
     mean(raw_is_standard, na.rm = TRUE) >= 0.05
   exact_path <- if (isTRUE(use_exact_label_path)) {
     .exact_label_match(
-      con, parsed, include_custom, alias_types, weights, min_score
+      con, slow_parsed, include_custom, alias_types, weights, min_score
     )
   } else {
     NULL
@@ -320,12 +404,13 @@ gnaf_match <- function(addresses, con, max_results = 1L, min_score = 60L,
     results[["exact"]] <- exact_path
     # Labels can disagree with their stored components. Only verified identity
     # can stop retrieval; 100 points can hide conflicts in zero-weight fields.
-    skip_ids <- exact_path[, .(complete = sum(match_basis == "exact_components") >= max_results),
-                            by = input_id][complete == TRUE, input_id]
+    exact_done <- exact_path[, .(complete = sum(match_basis == "exact_components") >= max_results),
+                              by = input_id][complete == TRUE, input_id]
+    skip_ids <- c(skip_ids, exact_done)
     verbose_stats$exact_inputs <- uniqueN(exact_path$input_id)
     .cli_match_detail(verbose, sprintf(
       "%s input(s) matched via exact label lookup in %s.",
-      cli::col_green(format(length(skip_ids), big.mark = ",")),
+      cli::col_green(format(length(exact_done), big.mark = ",")),
       cli::col_cyan(sprintf("%.2fs", verbose_stats$exact_elapsed))
     ))
   } else {
@@ -348,7 +433,7 @@ gnaf_match <- function(addresses, con, max_results = 1L, min_score = 60L,
     )
   if (cache_usable && DBI::dbExistsTable(con, "gnaf_match_cache")) {
     remaining_stds <- unique(stats::na.omit(
-      parsed[!input_id %in% skip_ids, input_standardised]
+      slow_parsed[!input_id %in% skip_ids, input_standardised]
     ))
     if (length(remaining_stds) > 0L) {
       cache_raw <- .cache_lookup(
@@ -356,7 +441,7 @@ gnaf_match <- function(addresses, con, max_results = 1L, min_score = 60L,
       )
       if (nrow(cache_raw) > 0L) {
         cache_hits <- cache_raw[
-          parsed[!input_id %in% skip_ids],
+          slow_parsed[!input_id %in% skip_ids],
           on = "input_standardised", nomatch = 0L
         ]
         if (nrow(cache_hits) > 0L) {
@@ -377,7 +462,7 @@ gnaf_match <- function(addresses, con, max_results = 1L, min_score = 60L,
   ))
 
   deduplicated <- .deduplicate_match_inputs(
-    parsed[!input_id %in% skip_ids]
+    slow_parsed[!input_id %in% skip_ids]
   )
   match_inputs <- deduplicated$inputs
   input_fanout <- deduplicated$fanout
@@ -634,6 +719,10 @@ gnaf_match <- function(addresses, con, max_results = 1L, min_score = 60L,
   } else {
     out <- .empty_result()
   }
+  # Index matches are complete single rows, so they skip the ranking above.
+  if (!is.null(fast)) {
+    out <- rbindlist(list(fast$rows, out), use.names = TRUE, fill = TRUE)
+  }
 
   common_cols <- setdiff(intersect(names(out), names(parsed)), "input_id")
   if (length(common_cols) > 0L) out[, (common_cols) := NULL]
@@ -648,15 +737,19 @@ gnaf_match <- function(addresses, con, max_results = 1L, min_score = 60L,
                   "score_flat")
   setcolorder(out, c(cols_first, setdiff(names(out), cols_first)))
   setorder(out, input_id, -matched, match_rank)
-  # Store newly matched high-confidence results in the cache.
+  # Store newly matched high-confidence results in the cache. Inputs the index
+  # answered are left out: they never consult the cache, and a batch of clean
+  # addresses would otherwise insert every one of its rows.
   if (cache_usable && is.null(alias_types) &&
       DBI::dbExistsTable(con, "gnaf_match_cache") && nrow(out) > 0L)
-    .cache_store(con, out[matched == TRUE & !input_id %in% results[["cache"]]$input_id],
+    .cache_store(con, out[matched == TRUE & !input_id %in% c(
+                   fast_ids, results[["cache"]]$input_id)],
                  cache_threshold)
 
   verbose_stats$wrangle_elapsed <- proc.time()[["elapsed"]] - wrangle_timer
   slow_path_matches <- out[
     matched == TRUE & !input_id %in% unique(c(
+      fast_ids,
       results[["exact"]]$input_id %||% integer(0L),
       results[["cache"]]$input_id %||% integer(0L)
     )),
@@ -1810,6 +1903,15 @@ WHERE r.match_rank <= %d
     )
   )
   if (!is.null(verbose_stats)) {
+    if (isTRUE(verbose_stats$fast_inputs > 0L)) {
+      cli::cli_li(
+        sprintf(
+          "Exact-label index matches: %s in %s.",
+          cli::col_green(format(verbose_stats$fast_inputs, big.mark = ",")),
+          cli::col_cyan(sprintf("%.2fs", verbose_stats$fast_elapsed))
+        )
+      )
+    }
     cli::cli_li(
       sprintf(
         "Exact label matches: %s in %s.",

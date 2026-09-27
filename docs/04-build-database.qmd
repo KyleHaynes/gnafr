@@ -177,6 +177,23 @@ The only time you need to call it yourself is after bulk deletes/updates run *ou
 gnafr's own load functions (e.g. raw `DBI::dbExecute()` `DELETE`s) — rare enough to
 be worth calling explicitly here as cheap insurance.
 
+## Step 4b — Exact-label index (usually automatic)
+
+```{r}
+#| eval: false
+gnaf_rebuild_exact_index(con)
+```
+
+`gnaf_load()` and `gnaf_load_psv()` also build `gnaf_exact_index`, a table that maps
+each principal address's label (and a few common written variants of it) to its PID.
+`gnaf_match()` looks every input up in it before parsing anything, so a batch that is
+mostly clean G-NAF-style addresses skips the parser and the scorer for nearly all of
+its rows - see [Exact-label index](03-theory.qmd#sec-exact-index). Building it takes
+about ten seconds per three million addresses. Call it yourself for a database built
+before the index existed, or after changing `gnaf_addresses` outside gnafr's load
+functions; a stale index is detected and ignored rather than trusted, and
+`gnaf_match()` falls back to the full pipeline.
+
 ## Step 5 (optional) — Custom addresses
 
 ```{r}

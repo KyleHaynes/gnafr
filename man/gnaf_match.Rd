@@ -160,6 +160,18 @@ Uses an exact-identity search alongside five fuzzy retrieval paths:
 }
 }
 \details{
+Inputs that already read like GNAF labels skip all of this. When the database
+has an exact-label index (built by \code{\link{gnaf_load}},
+\code{\link{gnaf_load_psv}} or \code{\link{gnaf_rebuild_exact_index}}), each
+input is first reduced to a key (upper case, commas and full stops removed,
+whitespace collapsed) and looked up directly. An input that names exactly one
+principal address, by its label or by a common written variant of it (a
+shortened flat word or street type, \code{5/12} unit notation, or no state),
+is matched on the spot: it is not parsed, standardised or scored, and is
+returned with every component at full weight and
+\code{match_basis = "exact_components"}. On large batches of clean addresses
+this is many times faster than the full pipeline. See Details.
+
 Street numbers compare both range endpoints: exact intervals earn
   full number weight, a candidate containing the input earns 70%, a candidate
   contained by the input earns 50%, and partial overlap earns 30%. Number
@@ -183,6 +195,22 @@ Street numbers compare both range endpoints: exact intervals earn
   house number is nearest the one requested, then to the lowest PID.
   \code{total_score} sums the gated components, while [gnaf_match_features()]
   still reports raw agreement.
+
+  The exact-label index is used only when it cannot change the answer:
+  \code{max_results = 1}, and \code{alias_types} either unset or including
+  \code{NA} (only principal addresses are indexed, so an alias label never
+  shadows the address that owns it). A key that would name more than one
+  address, or that is also the label of a custom address, is left to the full
+  pipeline, as is any input the index does not contain; the written variants
+  are ignored when \code{normalize = FALSE}. For an input answered this way
+  \code{input_standardised} is the matched GNAF label, the parsed \code{in_*}
+  columns describe the matched address (normalised as the parser would), and a
+  lot-only label is reported as \code{exact_components}. The index is ignored
+  if \code{gnaf_addresses} has changed since it was built, so a stale index can
+  never name the wrong address; rebuild it with
+  \code{\link{gnaf_rebuild_exact_index}} after modifying the table yourself.
+  Inputs answered by the index are not written to the match cache, since they
+  never consult it.
 
   Street directions qualify the street-type score: agreement keeps full
   credit, a missing direction halves it, and conflicting directions score

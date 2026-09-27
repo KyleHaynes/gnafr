@@ -10,7 +10,8 @@ gnaf_load_psv(
   state = "QLD",
   overwrite = FALSE,
   load_aliases = TRUE,
-  collapse_same_coordinates = FALSE
+  collapse_same_coordinates = FALSE,
+  exact_index = TRUE
 )
 }
 \arguments{
@@ -40,6 +41,12 @@ exactly the same finite longitude and latitude, including their aliases.
 Defaults to \code{FALSE}. Missing links or coordinates and custom addresses
 are retained. Reload with this option off to restore unit-level records.
 Matching searches the remaining addresses, so scores and coverage may change.}
+
+\item{exact_index}{If \code{TRUE} (default), rebuild the exact-label index
+(\code{\link{gnaf_rebuild_exact_index}}) after loading, which lets
+\code{gnaf_match()} skip parsing inputs that are already GNAF labels. A
+multi-state call builds it once, after the last state. Use \code{FALSE} to
+defer it and call \code{gnaf_rebuild_exact_index()} yourself.}
 }
 \value{
 Invisibly, the total number of GNAF rows in the database after

@@ -396,7 +396,7 @@ Other things worth ruling out on a machine that crashes:
 | Match | `gnaf_match()`, `gnaf_text_scores()`, `gnaf_match_features()` |
 | Parse | `address_parse()` |
 | Custom addresses | `gnaf_add()`, `gnaf_remove_custom()` |
-| Maintenance | `gnaf_canonicalize_street_types()`, `gnaf_build_street_aliases()`, `gnaf_rebuild_locality_index()` |
+| Maintenance | `gnaf_canonicalize_street_types()`, `gnaf_build_street_aliases()`, `gnaf_rebuild_locality_index()`, `gnaf_rebuild_exact_index()` |
 | Match cache | `gnaf_cache_status()`, `gnaf_cache_history()`, `gnaf_cache_sample()`, `gnaf_cache_rollback()`, `gnaf_cache_clear()` |
 | Spatial & app | `gnaf_app()`, `gnaf_threshold_filter()`, `spatial_lookup()`, `plot_boundaries_heatmap()`, `read_shapefile()`, `subset_shapefile()` |
 | Testing | `address_perturb_sample()` |

@@ -27,6 +27,10 @@ test_that("CSV imports preserve string identifiers and ISO dates in quoted paths
   expect_equal(row$flat_number, "01")
   expect_equal(row$street_type, "ROAD")
   expect_equal(row$date_created, as.Date("2017-07-27"))
+  # Loading also builds the exact-label index, keyed on the loaded label.
+  expect_false(is.null(gnafr:::.exact_index_state(con)))
+  expect_true("UNIT 01 10 SMITH ROAD BRISBANE QLD 4000" %in%
+                DBI::dbGetQuery(con, "SELECT lookup_key FROM gnaf_exact_index")$lookup_key)
 })
 
 test_that("gnaf_load backfills a street-type split for rows with a blank street_type", {

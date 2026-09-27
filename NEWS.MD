@@ -20,6 +20,27 @@
 
 ## Matching
 
+- New exact-label index. `gnaf_load()` and `gnaf_load_psv()` now build
+  `gnaf_exact_index`, a table that maps every principal address's label - upper case,
+  commas and full stops removed - and its common written variants (`UNIT` as `U`,
+  `5/12` unit notation, a shortened street type such as `ST` or `AVE`, no state) to its
+  PID. `gnaf_match()` looks each input up in it before parsing, and an input that names
+  exactly one address is returned immediately as `exact_components` at full weight,
+  without being parsed, standardised or scored. On 1.4 million labels from a QLD
+  database a call fell from 668 s to 54 s. Only principal rows are indexed and any key
+  that would name two addresses, or a custom address, is left to the full pipeline. The
+  index is used for `max_results = 1` with default alias handling, and ignored if
+  `gnaf_addresses` has changed since it was built. Add it to an existing database with
+  `gnaf_rebuild_exact_index(con)`; both loaders take `exact_index = FALSE` to defer it.
+- Exact labels now resolve to the address that owns them. The previous exact-label
+  stage could return a street-synonym alias that happens to share a real address's
+  label (correct PID on 97.7% of a 1.4 million label sample, now 99.9%), and reported
+  lot-only labels such as `LOT 24 SMITH ROAD, ...` as `weighted` even at 100 points
+  (they are now `exact_components`), which sent about 7% of exact labels through the
+  slow path.
+- Inputs answered by the exact-label index are not written to the match cache, which
+  they never consult. Without this a batch of clean addresses would insert every one
+  of its rows into `gnaf_match_cache`.
 - Number and unit credit is now conditional on the street agreeing. A house number
   or unit only locates an address within a street, so `score_number` and
   `score_flat` are scaled by street-name agreement (unchanged for the same street

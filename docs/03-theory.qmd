@@ -417,6 +417,34 @@ scores computed by older versions.
 
 `gnaf_match()` tries, in order, stopping as soon as an input is satisfied:
 
+### 0. Exact-label index {#sec-exact-index}
+
+Before anything is parsed, each input is reduced to a *key* - upper case, commas and
+full stops removed, whitespace collapsed, spaces around `-` and `/` removed - and
+looked up in `gnaf_exact_index`. The index holds the same key for every **principal**
+address label, plus (unless built with `variants = FALSE`) the written variants users
+commonly type: the flat word shortened (`UNIT` as `U`, or `5/12` notation), the
+street type shortened (`STREET` as `ST`, `AVENUE` as `AVE`), and the state omitted. For
+`UNIT 50 11 ROLLESTON STREET, KEPERRA QLD 4054` that is twelve keys, among them
+`U 50 11 ROLLESTON ST KEPERRA 4054` and `50/11 ROLLESTON STREET KEPERRA QLD 4054`.
+
+An input whose key names exactly one address is answered on the spot. It is not
+parsed, standardised or scored: every component takes its full weight (imputed
+through the real scorer, so custom `weights` still work), `match_basis` is
+`exact_components`, and the `in_*` columns are the matched address's own components.
+The index is conservative - it is used only for `max_results = 1` with the default
+alias handling, indexes principal rows only (so a street-synonym alias can never
+shadow the address that owns a label), drops any key that would name two addresses or
+that is also a custom address's label, prefers a genuine label over a variant of some
+other address, and is ignored when `gnaf_addresses` no longer matches the table it was
+built from. Everything it does not answer continues down the paths below.
+
+On 1.4 million labels sampled from a QLD database this replaced roughly eleven minutes
+of parsing, scoring and exact-label lookup with under a minute, and it also returned
+the right PID more often (99.9% against 97.7%): the earlier route could pick a
+street-synonym alias sharing a real address's label, and never reported lot-only
+labels as exact.
+
 ### 1. Exact label match
 
 If the standardised input string equals a G-NAF `address_label` exactly, it is

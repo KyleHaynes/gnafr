@@ -4,7 +4,13 @@
 \alias{gnaf_load}
 \title{Load GNAF CSV data into the database}
 \usage{
-gnaf_load(con, path, overwrite = FALSE, collapse_same_coordinates = FALSE)
+gnaf_load(
+  con,
+  path,
+  overwrite = FALSE,
+  collapse_same_coordinates = FALSE,
+  exact_index = TRUE
+)
 }
 \arguments{
 \item{con}{DBI connection from \code{gnaf_connect}.}
@@ -21,6 +27,11 @@ are retained; custom addresses are untouched. Applies to all GNAF rows
 after the CSV batch loads, including previously loaded rows. Reload with
 this option off to restore removed records. Matching then searches the
 remaining addresses, so unit-level match scores and coverage may change.}
+
+\item{exact_index}{If \code{TRUE} (default), rebuild the exact-label index
+(\code{\link{gnaf_rebuild_exact_index}}) after loading, which lets
+\code{gnaf_match()} skip parsing inputs that are already GNAF labels. Use
+\code{FALSE} to defer it and call \code{gnaf_rebuild_exact_index()} yourself.}
 }
 \value{
 Invisibly, the total number of GNAF rows now in the database.

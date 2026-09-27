@@ -23,11 +23,17 @@
 #'   after the CSV batch loads, including previously loaded rows. Reload with
 #'   this option off to restore removed records. Matching then searches the
 #'   remaining addresses, so unit-level match scores and coverage may change.
+#' @param exact_index If \code{TRUE} (default), rebuild the exact-label index
+#'   (\code{\link{gnaf_rebuild_exact_index}}) after loading, which lets
+#'   \code{gnaf_match()} skip parsing inputs that are already GNAF labels. Use
+#'   \code{FALSE} to defer it and call \code{gnaf_rebuild_exact_index()} yourself.
 #' @return Invisibly, the total number of GNAF rows now in the database.
 #' @export
 gnaf_load <- function(con, path, overwrite = FALSE,
-                      collapse_same_coordinates = FALSE) {
+                      collapse_same_coordinates = FALSE, exact_index = TRUE) {
   .validate_collapse_same_coordinates(collapse_same_coordinates)
+  if (!is.logical(exact_index) || length(exact_index) != 1L || is.na(exact_index))
+    stop("'exact_index' must be TRUE or FALSE", call. = FALSE)
   if (!is.character(path) || length(path) == 0L)
     stop("'path' must be a non-empty character vector")
 
@@ -112,6 +118,10 @@ gnaf_load <- function(con, path, overwrite = FALSE,
   gnaf_rebuild_locality_index(con)
   message("Rebuilding street-type index ...")
   gnaf_rebuild_street_type_index(con)
+  if (exact_index) {
+    message("Rebuilding exact-label index ...")
+    gnaf_rebuild_exact_index(con)
+  }
   DBI::dbExecute(con, "ANALYZE gnaf_addresses")
   DBI::dbExecute(con, "ANALYZE gnaf_locality_index")
   DBI::dbExecute(con, "ANALYZE gnaf_street_type_index")

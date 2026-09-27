@@ -19,7 +19,8 @@
         gnaf_build_street_aliases      = "street-only fallback rows",
         gnaf_canonicalize_street_types = "canonicalise street types",
         gnaf_rebuild_locality_index    = "rebuild locality search index",
-        gnaf_rebuild_street_type_index = "rebuild street-type index"
+        gnaf_rebuild_street_type_index = "rebuild street-type index",
+        gnaf_rebuild_exact_index       = "rebuild exact-label index"
     ),
     "Custom addresses" = list(
         gnaf_add           = "add custom addresses",
