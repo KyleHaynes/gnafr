@@ -49,6 +49,9 @@ free the second time.
   scan millions of rows per query; the database file survives restarts.
 - **Confidence scoring** — every match carries `total_score` plus six per-component
   scores, so callers can set their own bar for "trustworthy" per use case.
+- **Exact-label index** — inputs that are already G-NAF labels (or a common written
+  variant of one) are resolved by a single indexed lookup, before parsing, which makes
+  large batches of clean addresses many times faster.
 - **Multi-path fallback matching** — exact label lookup, a persistent match cache,
   postcode-blocked matching, a state-level fallback for addresses with no postcode,
   a locality (suburb-name) fallback for wrong/garbled postcodes, and an optional

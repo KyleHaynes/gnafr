@@ -97,7 +97,8 @@ sample_gnaf(con, n = 2)
 ### `gnaf_load()` {#gnaf_load}
 
 ```r
-gnaf_load(con, path, overwrite = FALSE)
+gnaf_load(con, path, overwrite = FALSE, collapse_same_coordinates = FALSE,
+          exact_index = TRUE)
 ```
 
 | Argument | Description |
@@ -105,6 +106,8 @@ gnaf_load(con, path, overwrite = FALSE)
 | `con` | DBI connection from `gnaf_connect()`. |
 | `path` | Character vector of one or more paths to G-NAF Core CSV files. |
 | `overwrite` | If `TRUE`, deletes existing G-NAF rows before loading. |
+| `collapse_same_coordinates` | If `TRUE`, removes secondaries whose linked GNAF primary has exactly the same finite coordinates, plus their aliases. Applies to all loaded GNAF rows after the batch. Default `FALSE` preserves unit detail; custom addresses are untouched. |
+| `exact_index` | If `TRUE` (default), rebuilds the [exact-label index](#gnaf_rebuild_exact_index) after loading. |
 
 Loads one or more G-NAF Core CSV files via DuckDB's native `read_csv` — the file is
 never pulled into R first. Duplicate PIDs are silently skipped unless `overwrite =
@@ -119,15 +122,20 @@ gnaf_load(con, c("C:/temp/gnaf.qld.csv", "C:/temp/gnaf.nsw.csv"))
 ### `gnaf_load_psv()` {#gnaf_load_psv}
 
 ```r
-gnaf_load_psv(con, gnaf_dir, overwrite = FALSE, load_aliases = TRUE)
+gnaf_load_psv(con, gnaf_dir, state = "QLD", overwrite = FALSE,
+              load_aliases = TRUE, collapse_same_coordinates = FALSE,
+              exact_index = TRUE)
 ```
 
 | Argument | Description |
 |---|---|
 | `con` | DBI connection. The database must have been initialised with `gnaf_init()`. |
 | `gnaf_dir` | Path to the G-NAF Standard directory containing the `*_psv.psv` files (e.g. `"G-NAF MAY 2026/Standard"`). |
-| `overwrite` | If `TRUE`, deletes all existing `source = 'gnaf'` rows before loading. |
+| `state` | One or more state codes to load. Defaults to `"QLD"`. |
+| `overwrite` | If `TRUE`, deletes existing `source = 'gnaf'` rows for the requested states before loading. |
 | `load_aliases` | If `TRUE` (default), also loads official locality/street alias variants. |
+| `collapse_same_coordinates` | If `TRUE`, removes secondaries in each loaded state whose linked GNAF primary has exactly the same finite coordinates, plus their aliases. Default `FALSE`; custom addresses are untouched. Also available through `gnaf_build_db()`. |
+| `exact_index` | If `TRUE` (default), rebuilds the [exact-label index](#gnaf_rebuild_exact_index) after loading; a multi-state call builds it once, after the last state. |
 
 **Returns**, invisibly, the total number of G-NAF rows in the database after loading.
 An alternative to `gnaf_load()` for the full raw PSV product — see [CSV vs PSV](04-build-database.qmd) for when to prefer each.
@@ -187,6 +195,31 @@ index.
 
 ```{r}
 gnaf_rebuild_locality_index(con)
+```
+
+### `gnaf_rebuild_exact_index()` {#gnaf_rebuild_exact_index}
+
+```r
+gnaf_rebuild_exact_index(con, variants = TRUE)
+```
+
+| Argument | Description |
+|---|---|
+| `con` | DBI connection, opened for writing. |
+| `variants` | If `TRUE` (default), also index the common written variants of each label: the flat word shortened (`U 50 11 ...`, `50/11 ...`), the street type shortened (`... ROLLESTON ST`), and the state left out (`... KEPERRA 4054`). `FALSE` indexes only the labels. |
+
+Rebuilds `gnaf_exact_index`, which maps normalised address labels (upper case, commas
+and full stops removed) straight to the principal address they name, so
+`gnaf_match()` can resolve inputs that are already G-NAF labels without parsing,
+standardising or scoring them - see [Exact-label index](03-theory.qmd#sec-exact-index).
+Keys that would name more than one address are left out. Called automatically by
+`gnaf_load()` and `gnaf_load_psv()`; call it manually to add the index to a database
+built before it existed, or after changing `gnaf_addresses` yourself
+(`gnaf_match()` ignores an index that no longer matches the table). **Returns**,
+invisibly, the number of keys in the index.
+
+```r
+gnaf_rebuild_exact_index(con)
 ```
 
 ## Parsing & matching

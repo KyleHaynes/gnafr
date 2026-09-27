@@ -40,7 +40,8 @@ test_that("reported matches recover boundaries without erasing spelling differen
   expect_identical(out$in_locality, c("MARSDEN", "S LUCIA", "RIVER HEADS"))
   expect_identical(out$in_street_name, c("AMS", "THE ESPLANADE", "WATERMANS"))
   expect_identical(out$in_street_type, c("WAY", NA_character_, "WAY"))
-  expect_identical(out$total_score[c(1L, 3L)], c(84L, 100L))
+  # "AMS" for "SAMS" is a street typo, so number and flat credit are scaled down.
+  expect_identical(out$total_score[c(1L, 3L)], c(78L, 100L))
   expect_gt(out$total_score[2L], 90L)
   expect_lt(out$total_score[2L], 100L)
   expect_lt(out$score_suburb[2L], out$score_suburb[3L])

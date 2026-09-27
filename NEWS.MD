@@ -1,3 +1,70 @@
+# gnafr 0.0.4
+
+## Address parsing
+
+- Suburbs that begin or end with a street-type word are no longer split across the
+  street type. `19 EXCALIBUR CT PARADISE, POINT QLD 4216` (and the same input with no
+  comma, or with `COURT` spelt out) parsed as street type `PARADISE`, locality `POINT`;
+  it now gives street `EXCALIBUR`, type `COURT`, locality `PARADISE POINT`, the same as
+  the comma-in-the-right-place form. A comma that lands inside the suburb name is
+  repaired when the word before it is a suburb word following a street type.
+- `PARADISE`, `LOOKOUT`, `DOWNS`, `RANGE`, `BRANCH`, `ESTATE`, `RIDGE`, `COVE`,
+  `HARBOUR`, `GAP`, `RESERVE`, `GARDENS`, `POCKET`, `LANDING`, `GRANGE`, `NEST`, `FLAT`
+  and `JUNCTION` are now treated as likely suburb words when a street type comes
+  before them (`Surfers Paradise`, `Point Lookout`, `Bracken Ridge`, `The Gap`).
+  Chosen against every distinct QLD street/suburb pair: of ~112,500 comma-less
+  inputs rebuilt from GNAF components, fully correct parses rise from 97.1% to
+  98.5% with none made worse (`CORNER` was tried and left out because it is a real
+  street type, as in `Blue Hills Corner`). Across all 5,967 QLD suburbs, 150 more
+  now parse correctly and none regress. Older match-cache entries are ignored.
+
+## Matching
+
+- New exact-label index. `gnaf_load()` and `gnaf_load_psv()` now build
+  `gnaf_exact_index`, a table that maps every principal address's label - upper case,
+  commas and full stops removed - and its common written variants (`UNIT` as `U`,
+  `5/12` unit notation, a shortened street type such as `ST` or `AVE`, no state) to its
+  PID. `gnaf_match()` looks each input up in it before parsing, and an input that names
+  exactly one address is returned immediately as `exact_components` at full weight,
+  without being parsed, standardised or scored. On 1.4 million labels from a QLD
+  database a call fell from 668 s to 54 s. Only principal rows are indexed and any key
+  that would name two addresses, or a custom address, is left to the full pipeline. The
+  index is used for `max_results = 1` with default alias handling, and ignored if
+  `gnaf_addresses` has changed since it was built. Add it to an existing database with
+  `gnaf_rebuild_exact_index(con)`; both loaders take `exact_index = FALSE` to defer it.
+- Exact labels now resolve to the address that owns them. The previous exact-label
+  stage could return a street-synonym alias that happens to share a real address's
+  label (correct PID on 97.7% of a 1.4 million label sample, now 99.9%), and reported
+  lot-only labels such as `LOT 24 SMITH ROAD, ...` as `weighted` even at 100 points
+  (they are now `exact_components`), which sent about 7% of exact labels through the
+  slow path.
+- Inputs answered by the exact-label index are not written to the match cache, which
+  they never consult. Without this a batch of clean addresses would insert every one
+  of its rows into `gnaf_match_cache`.
+- Number and unit credit is now conditional on the street agreeing. A house number
+  or unit only locates an address within a street, so `score_number` and
+  `score_flat` are scaled by street-name agreement (unchanged for the same street
+  or when either street name is missing; near zero for an unrelated street).
+  Previously a different street sharing the input's number and unit could collect
+  the whole number + flat weight and outrank the right street whose number is
+  missing from GNAF (GNAF lag). On real QLD addresses re-typed with a house number
+  that does not exist on their street, the wrong street was returned for 79% of
+  inputs without a unit and 48% with one; it is now 1% and 3%. On the simulated
+  typo benchmark, correct-PID moves 78.9% -> 78.3%, wrong-PID 21.1% -> 20.5%, and
+  ~1% of inputs move from matched to unmatched (about half of them wrong matches).
+  `total_score` is still the sum of its component columns; `gnaf_match_features()`
+  still reports raw agreement. Older match-cache entries are ignored.
+- Candidates with equal scores are now ordered by the house number nearest the one
+  requested, then by PID, so a missing number resolves to the closest real house
+  on the street rather than the lowest PID.
+- The `weights` and `fallback_threshold` documentation now states the current
+  defaults (12/12/16/10/30/20).
+
+## Misc
+
+- Startup message is more verbose, detailing functions by category.
+
+
 # gnafr 0.0.3
 
 ## Address parsing

@@ -1,7 +1,7 @@
 Package: gnafr
 Type: Package
 Title: Australian Address Matching Using GNAF
-Version: 0.0.3
+Version: 0.0.4
 Authors@R: person("Kyle", "Haynes", role = c("aut", "cre"),
     email = "kyle@kylehaynes.com.au")
 Description: Fast bulk address matching against the Geocoded National Address

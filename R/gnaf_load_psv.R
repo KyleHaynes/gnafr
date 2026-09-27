@@ -50,12 +50,27 @@
 #'   in the database are left untouched. Defaults to \code{FALSE}.
 #' @param load_aliases If \code{TRUE} (default), loads locality and street
 #'   alias address variants in addition to the standard records.
+#' @param collapse_same_coordinates If \code{TRUE}, remove GNAF secondary
+#'   addresses in each loaded state whose linked primary is present and has
+#'   exactly the same finite longitude and latitude, including their aliases.
+#'   Defaults to \code{FALSE}. Missing links or coordinates and custom addresses
+#'   are retained. Reload with this option off to restore unit-level records.
+#'   Matching searches the remaining addresses, so scores and coverage may change.
+#' @param exact_index If \code{TRUE} (default), rebuild the exact-label index
+#'   (\code{\link{gnaf_rebuild_exact_index}}) after loading, which lets
+#'   \code{gnaf_match()} skip parsing inputs that are already GNAF labels. A
+#'   multi-state call builds it once, after the last state. Use \code{FALSE} to
+#'   defer it and call \code{gnaf_rebuild_exact_index()} yourself.
 #' @return Invisibly, the total number of GNAF rows in the database after
 #'   loading (across all states, not just the one(s) just loaded).
 #' @export
 gnaf_load_psv <- function(con, gnaf_dir, state = "QLD", overwrite = FALSE,
-                          load_aliases = TRUE) {
+                          load_aliases = TRUE, collapse_same_coordinates = FALSE,
+                          exact_index = TRUE) {
 
+  .validate_collapse_same_coordinates(collapse_same_coordinates)
+  if (!is.logical(exact_index) || length(exact_index) != 1L || is.na(exact_index))
+    stop("'exact_index' must be TRUE or FALSE", call. = FALSE)
   gnaf_dir <- normalizePath(gnaf_dir, mustWork = TRUE)
   state <- toupper(state)
   if (length(state) == 0L || !all(grepl("^[A-Z]{2,3}$", state)))
@@ -66,7 +81,9 @@ gnaf_load_psv <- function(con, gnaf_dir, state = "QLD", overwrite = FALSE,
     total <- NULL
     for (s in state) {
       total <- gnaf_load_psv(con, gnaf_dir, state = s, overwrite = overwrite,
-                             load_aliases = load_aliases)
+                             load_aliases = load_aliases,
+                             collapse_same_coordinates = collapse_same_coordinates,
+                             exact_index = exact_index && identical(s, state[[length(state)]]))
     }
     return(invisible(total))
   }
@@ -150,6 +167,8 @@ gnaf_load_psv <- function(con, gnaf_dir, state = "QLD", overwrite = FALSE,
                     format(n3, big.mark = ",")))
   }
 
+  if (collapse_same_coordinates) .collapse_gnaf_secondaries(con, state)
+
   total <- DBI::dbGetQuery(con, "SELECT COUNT(*) AS n FROM gnaf_addresses")$n
   message(sprintf("Total GNAF addresses in database: %s",
                   format(total, big.mark = ",")))
@@ -158,6 +177,10 @@ gnaf_load_psv <- function(con, gnaf_dir, state = "QLD", overwrite = FALSE,
   gnaf_rebuild_locality_index(con)
   message("Rebuilding street-type index ...")
   gnaf_rebuild_street_type_index(con)
+  if (exact_index) {
+    message("Rebuilding exact-label index ...")
+    gnaf_rebuild_exact_index(con)
+  }
   DBI::dbExecute(con, "ANALYZE gnaf_addresses")
   DBI::dbExecute(con, "ANALYZE gnaf_locality_index")
   DBI::dbExecute(con, "ANALYZE gnaf_street_type_index")

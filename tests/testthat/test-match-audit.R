@@ -38,29 +38,31 @@ test_that("locality fallback ranks distinct postcodes rather than locality rows"
 })
 
 test_that("a locality lost to a street-type/suburb word collision is recovered", {
-  # "Point Lookout" is a real QLD suburb, but "LOOKOUT" is also a legitimate
+  # "Logan Village" is a real QLD suburb, but "VILLAGE" is also a legitimate
   # street type - with no comma to mark the boundary, address_parse() (which
-  # has no database access) picks "LOOKOUT" as the street type and loses the
+  # has no database access) picks "VILLAGE" as the street type and loses the
   # suburb entirely. gnaf_match() should recover it against the real
-  # gnaf_locality_index once a connection is available.
+  # gnaf_locality_index once a connection is available. (Point Lookout used
+  # to be the example here; LOOKOUT is now in .LOCALITY_COLLISION_WORDS, so
+  # the parser handles it without help.)
   con <- gnaf_connect(":memory:")
   on.exit(gnaf_disconnect(con), add = TRUE)
   gnaf_init(con)
   suppressMessages(gnaf_add(con, data.table::data.table(
-    address_detail_pid = "TARGET", address_label = "15 CUMMING PARADE, POINT LOOKOUT QLD 4183",
+    address_detail_pid = "TARGET", address_label = "15 CUMMING PARADE, LOGAN VILLAGE QLD 4207",
     number_first = 15L, street_name = "CUMMING", street_type = "PARADE",
-    locality_name = "POINT LOOKOUT", state = "QLD", postcode = 4183L
+    locality_name = "LOGAN VILLAGE", state = "QLD", postcode = 4207L
   )))
 
-  before <- address_parse("15 Cumming Pde Point Lookout QLD 4183")
+  before <- address_parse("15 Cumming Pde Logan Village QLD 4207")
   expect_true(is.na(before$in_locality))
 
-  out <- gnaf_match("15 Cumming Pde Point Lookout QLD 4183", con,
+  out <- gnaf_match("15 Cumming Pde Logan Village QLD 4207", con,
                     cache = FALSE, verbose = FALSE)
   expect_identical(out$address_detail_pid, "TARGET")
   expect_identical(out$total_score, 100L)
   expect_identical(out$input_standardised,
-                   "15 CUMMING PARADE, POINT LOOKOUT QLD 4183")
+                   "15 CUMMING PARADE, LOGAN VILLAGE QLD 4207")
 })
 
 test_that(".recover_missing_locality() leaves already-resolved and unrecoverable rows untouched", {

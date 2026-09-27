@@ -27,6 +27,55 @@ test_that("real street types and directions survive locality disambiguation", {
   expect_equal(p$in_street_suffix, c(rep(NA_character_, 5L), "NORTH", "N"))
 })
 
+test_that("a locality that starts with a street-type word is not split off the street", {
+  # Paradise Point: with the comma in the wrong place (or missing) PARADISE
+  # used to be read as the street type, giving type PARADISE, locality POINT.
+  x <- c("19 EXCALIBUR CT PARADISE, POINT QLD 4216",
+    "19 EXCALIBUR CT PARADISE POINT QLD 4216",
+    "19 EXCALIBUR COURT PARADISE POINT QLD 4216",
+    "19 EXCALIBUR COURT, PARADISE POINT QLD 4216",
+    "19 EXCALIBUR CT, PARADISE POINT QLD 4216",
+    "Unit 3, 19 Excalibur Ct Paradise, Point QLD 4216")
+  p <- address_parse(x)
+  expect_equal(p$in_street_name, rep("EXCALIBUR", length(x)))
+  expect_equal(p$in_street_type, rep("COURT", length(x)))
+  expect_equal(p$in_locality, rep("PARADISE POINT", length(x)))
+  expect_equal(p$in_number_first, rep(19L, length(x)))
+  expect_equal(p$in_postcode, rep(4216L, length(x)))
+  expect_equal(p$in_flat_number, c(rep(NA_character_, 5L), "3"))
+  expect_true(all(is.na(p$in_street_suffix)))
+})
+
+test_that("locality names built on street-type words parse without a comma", {
+  localities <- c("SURFERS PARADISE", "SANCTUARY COVE", "POINT LOOKOUT",
+    "PALM COVE", "BRACKEN RIDGE", "BRIDGEMAN DOWNS", "LOGAN RESERVE",
+    "THE GAP", "COOMERA GARDENS")
+  p <- address_parse(paste0("3 Main St ", localities, " QLD 4000"))
+  expect_equal(p$in_street_name, rep("MAIN", length(localities)))
+  expect_equal(p$in_street_type, rep("STREET", length(localities)))
+  expect_equal(p$in_locality, localities)
+})
+
+test_that("street types that double as locality words stay streets when a real type follows", {
+  # PARADISE / RIDGE / CORNER are genuine street types; only the position (or
+  # an earlier street type) says they are part of the suburb instead.
+  p <- address_parse(c("10 Paradise St Newtown QLD 4305",
+    "10 Paradise Rd, Newtown QLD 4305",
+    "5 Sunset Ridge, Bracken Ridge QLD 4017",
+    "5 Sunset Ridge Bracken Ridge QLD 4017",
+    "10 Blue Hills Corner Malanda QLD 4885",
+    "10 Smith St West, Paradise Point QLD 4216"))
+  expect_equal(p$in_street_name,
+    c("PARADISE", "PARADISE", "SUNSET", "SUNSET", "BLUE HILLS", "SMITH"))
+  expect_equal(p$in_street_type,
+    c("STREET", "ROAD", "RIDGE", "RIDGE", "CORNER", "STREET"))
+  expect_equal(p$in_locality,
+    c("NEWTOWN", "NEWTOWN", "BRACKEN RIDGE", "BRACKEN RIDGE", "MALANDA",
+      "PARADISE POINT"))
+  # A direction after the type belongs to the street, never to the suburb.
+  expect_equal(p$in_street_suffix, c(rep(NA_character_, 5L), "WEST"))
+})
+
 test_that("terminal ST remains a type after type-like street-name words", {
   p <- address_parse(c("10 Mount View St", "10 Park Lane St", "Mount View St"))
   expect_equal(p$in_street_name, c("MOUNT VIEW", "PARK LANE", "MOUNT VIEW"))

@@ -26,6 +26,18 @@
 #'         (e.g. the street name itself needs fuzzy resolution).
 #' }
 #'
+#' Inputs that already read like GNAF labels skip all of this. When the database
+#' has an exact-label index (built by \code{\link{gnaf_load}},
+#' \code{\link{gnaf_load_psv}} or \code{\link{gnaf_rebuild_exact_index}}), each
+#' input is first reduced to a key (upper case, commas and full stops removed,
+#' whitespace collapsed) and looked up directly. An input that names exactly one
+#' principal address, by its label or by a common written variant of it (a
+#' shortened flat word or street type, \code{5/12} unit notation, or no state),
+#' is matched on the spot: it is not parsed, standardised or scored, and is
+#' returned with every component at full weight and
+#' \code{match_basis = "exact_components"}. On large batches of clean addresses
+#' this is many times faster than the full pipeline. See Details.
+#'
 #' @param con DBI connection from \code{gnaf_connect}.
 #' @param addresses Character vector of address strings.
 #' @param max_results Maximum number of matches to return per input.
@@ -82,15 +94,13 @@
 #'   \code{FALSE}.
 #' @param fallback_threshold Total score at or below which a weak-locality
 #'   result is eligible for locality fallback. Default 90: a clean correct
-#'   match typically scores 95+, whereas a
-#'   coincidental match - same postcode and house number, unrelated street -
-#'   can still reach into the low-to-mid 80s (e.g. 20 postcode + 10 number +
-#'   partial suburb/street-name credit). 90 leaves enough margin to catch those
-#'   coincidences and let the locality scan (which discovers the right postcode
-#'   from the suburb name regardless of how far off the stated one is) find the
-#'   true candidate, without firing for genuinely good matches.
-#' @param weights Named list of score weights. Defaults to postcode = 20,
-#'   suburb = 15, street_name = 40, street_type = 10, number = 10, flat = 5.
+#'   match typically scores 95+, whereas a result at or below 90 has a real
+#'   discrepancy in its suburb, street, number or unit. 90 leaves enough margin
+#'   to let the locality scan (which discovers the right postcode from the
+#'   suburb name regardless of how far off the stated one is) find the true
+#'   candidate, without firing for genuinely good matches.
+#' @param weights Named list of score weights. Defaults to postcode = 12,
+#'   suburb = 12, street_name = 16, street_type = 10, number = 30, flat = 20.
 #'   Weights must sum to 100.
 #' @details Street numbers compare both range endpoints: exact intervals earn
 #'   full number weight, a candidate containing the input earns 70%, a candidate
@@ -101,6 +111,36 @@
 #'   candidate retrieval and number scoring. Lots are used for this purpose only
 #'   when the input has no street number. Use [gnaf_match_features()] to inspect
 #'   lot agreement separately, alongside other conflicts and missing evidence.
+#'
+#'   A house number or unit only locates an address within a street, so number
+#'   and flat credit is conditional on the street: \code{score_number} and
+#'   \code{score_flat} are scaled by how well the street name agrees (1 for the
+#'   same street, falling with the same name similarity that drives
+#'   \code{score_street_name}, and left alone when either street name is
+#'   missing). A different street that merely shares the number and unit earns
+#'   almost nothing for them, so it cannot outrank the right street whose number
+#'   is absent from GNAF, for example because GNAF lags new development; that
+#'   street is found by the street-number-relaxed fallback and returned with an
+#'   honestly low \code{score_number}. Ties in score go to the address whose
+#'   house number is nearest the one requested, then to the lowest PID.
+#'   \code{total_score} sums the gated components, while [gnaf_match_features()]
+#'   still reports raw agreement.
+#'
+#'   The exact-label index is used only when it cannot change the answer:
+#'   \code{max_results = 1}, and \code{alias_types} either unset or including
+#'   \code{NA} (only principal addresses are indexed, so an alias label never
+#'   shadows the address that owns it). A key that would name more than one
+#'   address, or that is also the label of a custom address, is left to the full
+#'   pipeline, as is any input the index does not contain; the written variants
+#'   are ignored when \code{normalize = FALSE}. For an input answered this way
+#'   \code{input_standardised} is the matched GNAF label, the parsed \code{in_*}
+#'   columns describe the matched address (normalised as the parser would), and a
+#'   lot-only label is reported as \code{exact_components}. The index is ignored
+#'   if \code{gnaf_addresses} has changed since it was built, so a stale index can
+#'   never name the wrong address; rebuild it with
+#'   \code{\link{gnaf_rebuild_exact_index}} after modifying the table yourself.
+#'   Inputs answered by the index are not written to the match cache, since they
+#'   never consult it.
 #'
 #'   Street directions qualify the street-type score: agreement keeps full
 #'   credit, a missing direction halves it, and conflicting directions score
@@ -153,8 +193,9 @@
 #' @return A \code{data.table} ordered by \code{input_id} then \code{match_rank}.
 #'   The \code{match_basis} column is \code{exact_components},
 #'   \code{postcode_only}, or \code{weighted}, and is \code{NA} for unmatched
-#'   inputs. Within each basis, candidates sort by descending \code{total_score}
-#'   then PID. Includes a standardised input string for every row and retains
+#'   inputs. Within each basis, candidates sort by descending \code{total_score},
+#'   then nearest house number, then PID. Includes a standardised input string
+#'   for every row and retains
 #'   unmatched inputs with missing match columns.
 #' @export
 gnaf_match <- function(addresses, con, max_results = 1L, min_score = 60L,
@@ -239,16 +280,59 @@ gnaf_match <- function(addresses, con, max_results = 1L, min_score = 60L,
   total_timer <- proc.time()[["elapsed"]]
   address_count <- length(addresses)
   address_word <- if (address_count == 1L) "address" else "addresses"
-  .cli_match_step(
-    verbose,
-    sprintf(
-      "Parsing %s %s.",
-      cli::col_blue(format(address_count, big.mark = ",")),
-      address_word
+
+  # ------------------------------------------------------------------
+  # Fast path 0: exact-label index. An input that is (case, commas and the
+  # common written variants aside) a GNAF label needs no parsing, standardising
+  # or scoring - the index names the address directly. Only one result per
+  # input is ever complete this way, and only principal rows are indexed, so
+  # the path is used just when neither can change the answer.
+  # ------------------------------------------------------------------
+  index_usable <- max_results == 1L && (is.null(alias_types) || anyNA(alias_types))
+  index_state <- if (index_usable) .exact_index_state(con) else NULL
+  fast <- NULL
+  fast_elapsed <- 0
+  if (!is.null(index_state)) {
+    .cli_match_step(
+      verbose,
+      sprintf(
+        "Looking up %s %s in the exact-label index.",
+        cli::col_blue(format(address_count, big.mark = ",")),
+        address_word
+      )
     )
-  )
+    fast_timer <- proc.time()[["elapsed"]]
+    fast <- .exact_index_match(
+      con, addresses, index_state, include_custom, min_score, weights, normalize
+    )
+    fast_elapsed <- proc.time()[["elapsed"]] - fast_timer
+    .cli_match_detail(verbose, sprintf(
+      "%s input(s) matched via the exact-label index in %s (parsing skipped).",
+      cli::col_green(format(length(fast$ids), big.mark = ",")),
+      cli::col_cyan(sprintf("%.2fs", fast_elapsed))
+    ))
+  } else if (isTRUE(verbose) && address_count >= 20000L) {
+    .cli_match_detail(verbose, paste0(
+      "Tip: gnaf_rebuild_exact_index(con) builds an index that matches inputs ",
+      "already in GNAF label form without parsing them (needs a writable ",
+      "connection); none is available for this call."
+    ))
+  }
+  fast_ids <- fast$ids %||% integer(0L)
+  rest_idx <- if (length(fast_ids) > 0L) seq_len(address_count)[-fast_ids] else
+    seq_len(address_count)
+
+  if (length(rest_idx) > 0L)
+    .cli_match_step(
+      verbose,
+      sprintf(
+        "Parsing %s %s.",
+        cli::col_blue(format(length(rest_idx), big.mark = ",")),
+        if (length(rest_idx) == 1L) "address" else "addresses"
+      )
+    )
   parse_timer <- proc.time()[["elapsed"]]
-  parsed <- address_parse(addresses, normalize = normalize)
+  parsed <- address_parse(addresses[rest_idx], normalize = normalize)
   parse_elapsed <- proc.time()[["elapsed"]] - parse_timer
 
   # address_parse() has no database access, so when a comma-less address's
@@ -260,18 +344,31 @@ gnaf_match <- function(addresses, con, max_results = 1L, min_score = 60L,
   # locality guessing that flag already controls.
   if (isTRUE(locality_fallback)) .recover_missing_locality(con, parsed)
 
-  .cli_match_step(verbose, "Standardising parsed input addresses.")
+  if (length(rest_idx) > 0L)
+    .cli_match_step(verbose, "Standardising parsed input addresses.")
   standardise_timer <- proc.time()[["elapsed"]]
   parsed[, input_standardised := .standardise_input(parsed)]
   standardise_elapsed <- proc.time()[["elapsed"]] - standardise_timer
-  .cli_match_detail(verbose, sprintf(
-    "Input standardisation completed in %s.",
-    cli::col_cyan(sprintf("%.2fs", standardise_elapsed))
-  ))
+  if (length(rest_idx) > 0L)
+    .cli_match_detail(verbose, sprintf(
+      "Input standardisation completed in %s.",
+      cli::col_cyan(sprintf("%.2fs", standardise_elapsed))
+    ))
+
+  # Everything below that still needs matching works on `slow_parsed`; `parsed`
+  # additionally carries the inputs the index resolved, in input order.
+  parsed[, input_id := rest_idx[input_id]]
+  slow_parsed <- parsed
+  if (!is.null(fast)) {
+    parsed <- rbindlist(list(fast$parsed, parsed), use.names = TRUE, fill = TRUE)
+    setorder(parsed, input_id)
+  }
 
   verbose_stats <- list(
     parse_elapsed = parse_elapsed,
     standardise_elapsed = standardise_elapsed,
+    fast_inputs = length(fast_ids),
+    fast_elapsed = fast_elapsed,
     exact_inputs = 0L,
     exact_elapsed = 0,
     cache_inputs = 0L,
@@ -283,7 +380,7 @@ gnaf_match <- function(addresses, con, max_results = 1L, min_score = 60L,
 
   results    <- list()
   diagnostics <- list()
-  skip_ids   <- integer(0L)
+  skip_ids   <- fast_ids
 
   # ------------------------------------------------------------------
   # Fast path 1: exact address_label match
@@ -291,13 +388,13 @@ gnaf_match <- function(addresses, con, max_results = 1L, min_score = 60L,
   # Ideal for re-processing previously matched/standardised output.
   # ------------------------------------------------------------------
   exact_timer <- proc.time()[["elapsed"]]
-  raw_is_standard <- toupper(trimws(.repair_address_encoding(parsed$input_raw))) ==
-    parsed$input_standardised
-  use_exact_label_path <- nrow(parsed) <= 100L ||
+  raw_is_standard <- toupper(trimws(.repair_address_encoding(slow_parsed$input_raw))) ==
+    slow_parsed$input_standardised
+  use_exact_label_path <- nrow(slow_parsed) <= 100L ||
     mean(raw_is_standard, na.rm = TRUE) >= 0.05
   exact_path <- if (isTRUE(use_exact_label_path)) {
     .exact_label_match(
-      con, parsed, include_custom, alias_types, weights, min_score
+      con, slow_parsed, include_custom, alias_types, weights, min_score
     )
   } else {
     NULL
@@ -307,12 +404,13 @@ gnaf_match <- function(addresses, con, max_results = 1L, min_score = 60L,
     results[["exact"]] <- exact_path
     # Labels can disagree with their stored components. Only verified identity
     # can stop retrieval; 100 points can hide conflicts in zero-weight fields.
-    skip_ids <- exact_path[, .(complete = sum(match_basis == "exact_components") >= max_results),
-                            by = input_id][complete == TRUE, input_id]
+    exact_done <- exact_path[, .(complete = sum(match_basis == "exact_components") >= max_results),
+                              by = input_id][complete == TRUE, input_id]
+    skip_ids <- c(skip_ids, exact_done)
     verbose_stats$exact_inputs <- uniqueN(exact_path$input_id)
     .cli_match_detail(verbose, sprintf(
       "%s input(s) matched via exact label lookup in %s.",
-      cli::col_green(format(length(skip_ids), big.mark = ",")),
+      cli::col_green(format(length(exact_done), big.mark = ",")),
       cli::col_cyan(sprintf("%.2fs", verbose_stats$exact_elapsed))
     ))
   } else {
@@ -335,7 +433,7 @@ gnaf_match <- function(addresses, con, max_results = 1L, min_score = 60L,
     )
   if (cache_usable && DBI::dbExistsTable(con, "gnaf_match_cache")) {
     remaining_stds <- unique(stats::na.omit(
-      parsed[!input_id %in% skip_ids, input_standardised]
+      slow_parsed[!input_id %in% skip_ids, input_standardised]
     ))
     if (length(remaining_stds) > 0L) {
       cache_raw <- .cache_lookup(
@@ -343,7 +441,7 @@ gnaf_match <- function(addresses, con, max_results = 1L, min_score = 60L,
       )
       if (nrow(cache_raw) > 0L) {
         cache_hits <- cache_raw[
-          parsed[!input_id %in% skip_ids],
+          slow_parsed[!input_id %in% skip_ids],
           on = "input_standardised", nomatch = 0L
         ]
         if (nrow(cache_hits) > 0L) {
@@ -364,7 +462,7 @@ gnaf_match <- function(addresses, con, max_results = 1L, min_score = 60L,
   ))
 
   deduplicated <- .deduplicate_match_inputs(
-    parsed[!input_id %in% skip_ids]
+    slow_parsed[!input_id %in% skip_ids]
   )
   match_inputs <- deduplicated$inputs
   input_fanout <- deduplicated$fanout
@@ -525,9 +623,10 @@ gnaf_match <- function(addresses, con, max_results = 1L, min_score = 60L,
   # Deliberately not conditioned on the current best candidate's own
   # score_number: the winning candidate under the old number-first filter
   # necessarily has a matching/overlapping number (that's how it got
-  # through), so its score_number is often already full even when its street
-  # is wrong - checking it would almost never catch the exact bug this path
-  # exists to fix. A plain weak-total-score bar (mirroring locality
+  # through), so its number says nothing about whether its street is right.
+  # Number and flat credit is now scaled by street agreement (see
+  # .street_gate()), which is what stops such a wrong-street candidate from
+  # posting a high total and suppressing this path. A plain weak-total-score bar (mirroring locality
   # fallback's) lets the street-name search itself decide whether re-running
   # helps; if the parsed street has no better row anywhere, it simply finds
   # nothing and the existing result stands.
@@ -616,8 +715,13 @@ gnaf_match <- function(addresses, con, max_results = 1L, min_score = 60L,
     # Re-apply max_results and assign final rank
     out <- out[out[, .I[seq_len(min(.N, max_results))], by = input_id]$V1]
     out[, match_rank := seq_len(.N), by = input_id]
+    out[, number_distance := NULL]
   } else {
     out <- .empty_result()
+  }
+  # Index matches are complete single rows, so they skip the ranking above.
+  if (!is.null(fast)) {
+    out <- rbindlist(list(fast$rows, out), use.names = TRUE, fill = TRUE)
   }
 
   common_cols <- setdiff(intersect(names(out), names(parsed)), "input_id")
@@ -633,15 +737,19 @@ gnaf_match <- function(addresses, con, max_results = 1L, min_score = 60L,
                   "score_flat")
   setcolorder(out, c(cols_first, setdiff(names(out), cols_first)))
   setorder(out, input_id, -matched, match_rank)
-  # Store newly matched high-confidence results in the cache.
+  # Store newly matched high-confidence results in the cache. Inputs the index
+  # answered are left out: they never consult the cache, and a batch of clean
+  # addresses would otherwise insert every one of its rows.
   if (cache_usable && is.null(alias_types) &&
       DBI::dbExistsTable(con, "gnaf_match_cache") && nrow(out) > 0L)
-    .cache_store(con, out[matched == TRUE & !input_id %in% results[["cache"]]$input_id],
+    .cache_store(con, out[matched == TRUE & !input_id %in% c(
+                   fast_ids, results[["cache"]]$input_id)],
                  cache_threshold)
 
   verbose_stats$wrangle_elapsed <- proc.time()[["elapsed"]] - wrangle_timer
   slow_path_matches <- out[
     matched == TRUE & !input_id %in% unique(c(
+      fast_ids,
       results[["exact"]]$input_id %||% integer(0L),
       results[["cache"]]$input_id %||% integer(0L)
     )),
@@ -810,7 +918,8 @@ gnaf_match <- function(addresses, con, max_results = 1L, min_score = 60L,
   exprs <- .score_sql_exprs(
     weights, i = "c", g = "c",
     suburb_similarity = "c.suburb_similarity",
-    street_similarity = "c.street_similarity"
+    street_similarity = "c.street_similarity",
+    street_gate = "c.street_gate"
   )
   sel_scores <- paste(
     mapply(function(nm, ex) sprintf("    %s AS %s", ex, nm), names(exprs), exprs),
@@ -822,12 +931,15 @@ gnaf_match <- function(addresses, con, max_results = 1L, min_score = 60L,
   # Bound the remaining components conservatively, including fractional weights.
   # Use the actual name expression, including blended metrics, directions and
   # exact/rounding rules. A raw-JW bound could discard a valid improved score.
-  other_max <- sum(ceiling(unlist(weights[
-    !names(weights) %in% c("postcode", "street_name")
-  ])))
+  # Number and flat credit is scaled by the street gate, so a candidate on a
+  # different street can earn almost none of it: bound those two by the gate
+  # (+1 for their independent half-even roundings) rather than their full
+  # weights, which prunes wrong streets before they are scored in full.
+  other_max <- sum(ceiling(unlist(weights[c("suburb", "street_type")])))
+  gated_max <- sum(ceiling(unlist(weights[c("number", "flat")])))
   street_bound <- sprintf(
-    "(%s) + (%s) + %g >= %d",
-    exprs$score_postcode, exprs$score_street_name, other_max, min_score
+    "(%s) + (%s) + %g + CEIL(%g * c.street_gate) + 1 >= %d",
+    exprs$score_postcode, exprs$score_street_name, other_max, gated_max, min_score
   )
   # Some GNAF rows have a blank street_type with any type word embedded in
   # street_name instead (e.g. "THE POINT CIRCUIT" with street_type NULL -
@@ -922,11 +1034,14 @@ WITH raw_candidates AS (
 %s
 ),
 candidates AS (
-  SELECT * FROM raw_candidates c
+  SELECT * FROM (
+    SELECT c.*, %s AS street_gate FROM raw_candidates c
+  ) c
   WHERE %s
 ),
 components AS (
   SELECT address_detail_pid, input_id, %s,
+    CAST(ABS(c.number_first - c.in_number_first) AS INTEGER) AS number_distance,
 %s
   FROM candidates c
 ),
@@ -937,16 +1052,18 @@ scored AS (
 ranked AS (
   SELECT *,
     ROW_NUMBER() OVER (PARTITION BY input_id ORDER BY
-      (match_basis = 'exact_components') DESC, total_score DESC, address_detail_pid) AS match_rank
+      (match_basis = 'exact_components') DESC, total_score DESC,
+      number_distance ASC NULLS LAST, address_detail_pid) AS match_rank
   FROM scored
   WHERE total_score >= %d
 )
-SELECT %s, r.input_id, %s, r.total_score, r.match_rank, r.match_basis
+SELECT %s, r.input_id, %s, r.total_score, r.match_rank, r.match_basis, r.number_distance
 FROM ranked r
 JOIN %s g ON g.address_detail_pid = r.address_detail_pid
 WHERE r.match_rank <= %d
 ",
     candidate_sql,
+    .street_gate_sql("c.street_similarity"),
     street_bound,
     identity_basis,
     sel_scores,
@@ -1143,7 +1260,7 @@ WHERE r.match_rank <= %d
 
 # Recovers a locality that address_parse() lost because, with no comma to
 # mark the street/suburb boundary, its rightmost apparent street-type word
-# was actually part of the suburb name (e.g. "Point Lookout" - LOOKOUT is a
+# was actually part of the suburb name (e.g. "Edge Hill" - EDGE is a
 # legitimate street type; .LOCALITY_COLLISION_WORDS in R/parse.R already
 # handles some of these, but it's a fixed word list checked without any
 # database access, so it can't be complete, and its "search one word further
@@ -1786,6 +1903,15 @@ WHERE r.match_rank <= %d
     )
   )
   if (!is.null(verbose_stats)) {
+    if (isTRUE(verbose_stats$fast_inputs > 0L)) {
+      cli::cli_li(
+        sprintf(
+          "Exact-label index matches: %s in %s.",
+          cli::col_green(format(verbose_stats$fast_inputs, big.mark = ",")),
+          cli::col_cyan(sprintf("%.2fs", verbose_stats$fast_elapsed))
+        )
+      )
+    }
     cli::cli_li(
       sprintf(
         "Exact label matches: %s in %s.",

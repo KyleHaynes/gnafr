@@ -10,7 +10,8 @@ gnaf_build_db(
   states = "QLD",
   overwrite = FALSE,
   load_aliases = TRUE,
-  build_street_aliases = TRUE
+  build_street_aliases = TRUE,
+  collapse_same_coordinates = FALSE
 )
 }
 \arguments{
@@ -34,6 +35,10 @@ alias variants. Default \code{TRUE}.}
 
 \item{build_street_aliases}{If \code{TRUE} (default), also runs
 \code{gnaf_build_street_aliases} after loading.}
+
+\item{collapse_same_coordinates}{Passed to \code{gnaf_load_psv}; remove
+secondaries and their aliases when the linked GNAF primary has exactly
+the same finite coordinates. Default \code{FALSE} preserves unit detail.}
 }
 \value{
 Invisibly, the result of \code{gnaf_status(con)}.

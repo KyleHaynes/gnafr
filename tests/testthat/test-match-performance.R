@@ -111,7 +111,8 @@ test_that("bulk locality fallback preserves numbered, range, lot and suffix matc
                               .default_match_weights(), TRUE)$matches
   data.table::setorder(out, input_id)
   expect_identical(out$address_detail_pid, rep(rows$address_detail_pid, 26L))
-  expect_identical(out$score_number, rep(c(10L, 7L, 10L, 10L), 26L))
+  expect_identical(out$score_number,
+                   rep(as.integer(round(.default_match_weights()$number * c(1, 0.7, 1, 1))), 26L))
   expect_identical(inputs, before)
   expect_false(any(grepl("^__gnafr_", DBI::dbListTables(con))))
 })
@@ -186,13 +187,27 @@ test_that("bulk ranking uses edit evidence and retains zero-padded lot candidate
   parsed <- address_parse(c("10 Xilliam Road, Brisbane QLD 4000",
                              "Lot 007 Main Road, Brisbane QLD 4000"))
   duckdb::duckdb_register(con, "metric_inputs", parsed)
+  weights <- .default_match_weights()
   for (split in c(FALSE, TRUE)) {
-    out <- .run_duckdb_score_query(con, "metric_inputs", "custom_addresses",
-      "g.postcode = i.in_postcode",
-      if (split) "TRUE" else .number_prefilter_sql(),
-      .default_match_weights(), 1L, 86L, split_number = split)$matches
-    data.table::setorder(out, input_id)
+    score <- function(min_score) {
+      out <- .run_duckdb_score_query(con, "metric_inputs", "custom_addresses",
+        "g.postcode = i.in_postcode",
+        if (split) "TRUE" else .number_prefilter_sql(),
+        weights, 1L, min_score, split_number = split)$matches
+      data.table::setorder(out, input_id)
+      out
+    }
+    out <- score(0L)
     expect_identical(out$address_detail_pid, c("Z_CORRECT", "LOT"))
-    expect_identical(out$score_number, c(10L, 10L))
+    # "Xilliam" is one edit from WILLIAM, so its matching number is credited but
+    # scaled by the street similarity; the lot input names its street exactly.
+    expect_gt(out$score_number[1L], 0L)
+    expect_lt(out$score_number[1L], weights$number)
+    expect_identical(out$score_number[2L], as.integer(round(weights$number)))
+    # Pruning at exactly the weakest winner's score must keep every winner: the
+    # bound on the street-gated number and flat credit may not discard it.
+    pruned <- score(min(out$total_score))
+    expect_identical(pruned$address_detail_pid, c("Z_CORRECT", "LOT"))
+    expect_identical(pruned$total_score, out$total_score)
   }
 })

@@ -80,16 +80,14 @@ other paths are re-matched against street-level aliases
 
 \item{fallback_threshold}{Total score at or below which a weak-locality
 result is eligible for locality fallback. Default 90: a clean correct
-match typically scores 95+, whereas a
-coincidental match - same postcode and house number, unrelated street -
-can still reach into the low-to-mid 80s (e.g. 20 postcode + 10 number +
-partial suburb/street-name credit). 90 leaves enough margin to catch those
-coincidences and let the locality scan (which discovers the right postcode
-from the suburb name regardless of how far off the stated one is) find the
-true candidate, without firing for genuinely good matches.}
+match typically scores 95+, whereas a result at or below 90 has a real
+discrepancy in its suburb, street, number or unit. 90 leaves enough margin
+to let the locality scan (which discovers the right postcode from the
+suburb name regardless of how far off the stated one is) find the true
+candidate, without firing for genuinely good matches.}
 
-\item{weights}{Named list of score weights. Defaults to postcode = 20,
-suburb = 15, street_name = 40, street_type = 10, number = 10, flat = 5.
+\item{weights}{Named list of score weights. Defaults to postcode = 12,
+suburb = 12, street_name = 16, street_type = 10, number = 30, flat = 20.
 Weights must sum to 100.}
 
 \item{normalize}{Passed to \code{address_parse}; defaults to \code{TRUE}.}
@@ -129,8 +127,9 @@ See \code{\link{gnaf_list_geographies}}, \code{\link{gnaf_add_geography}} and
 A \code{data.table} ordered by \code{input_id} then \code{match_rank}.
   The \code{match_basis} column is \code{exact_components},
   \code{postcode_only}, or \code{weighted}, and is \code{NA} for unmatched
-  inputs. Within each basis, candidates sort by descending \code{total_score}
-  then PID. Includes a standardised input string for every row and retains
+  inputs. Within each basis, candidates sort by descending \code{total_score},
+  then nearest house number, then PID. Includes a standardised input string
+  for every row and retains
   unmatched inputs with missing match columns.
 }
 \description{
@@ -161,6 +160,18 @@ Uses an exact-identity search alongside five fuzzy retrieval paths:
 }
 }
 \details{
+Inputs that already read like GNAF labels skip all of this. When the database
+has an exact-label index (built by \code{\link{gnaf_load}},
+\code{\link{gnaf_load_psv}} or \code{\link{gnaf_rebuild_exact_index}}), each
+input is first reduced to a key (upper case, commas and full stops removed,
+whitespace collapsed) and looked up directly. An input that names exactly one
+principal address, by its label or by a common written variant of it (a
+shortened flat word or street type, \code{5/12} unit notation, or no state),
+is matched on the spot: it is not parsed, standardised or scored, and is
+returned with every component at full weight and
+\code{match_basis = "exact_components"}. On large batches of clean addresses
+this is many times faster than the full pipeline. See Details.
+
 Street numbers compare both range endpoints: exact intervals earn
   full number weight, a candidate containing the input earns 70%, a candidate
   contained by the input earns 50%, and partial overlap earns 30%. Number
@@ -170,6 +181,36 @@ Street numbers compare both range endpoints: exact intervals earn
   candidate retrieval and number scoring. Lots are used for this purpose only
   when the input has no street number. Use [gnaf_match_features()] to inspect
   lot agreement separately, alongside other conflicts and missing evidence.
+
+  A house number or unit only locates an address within a street, so number
+  and flat credit is conditional on the street: \code{score_number} and
+  \code{score_flat} are scaled by how well the street name agrees (1 for the
+  same street, falling with the same name similarity that drives
+  \code{score_street_name}, and left alone when either street name is
+  missing). A different street that merely shares the number and unit earns
+  almost nothing for them, so it cannot outrank the right street whose number
+  is absent from GNAF, for example because GNAF lags new development; that
+  street is found by the street-number-relaxed fallback and returned with an
+  honestly low \code{score_number}. Ties in score go to the address whose
+  house number is nearest the one requested, then to the lowest PID.
+  \code{total_score} sums the gated components, while [gnaf_match_features()]
+  still reports raw agreement.
+
+  The exact-label index is used only when it cannot change the answer:
+  \code{max_results = 1}, and \code{alias_types} either unset or including
+  \code{NA} (only principal addresses are indexed, so an alias label never
+  shadows the address that owns it). A key that would name more than one
+  address, or that is also the label of a custom address, is left to the full
+  pipeline, as is any input the index does not contain; the written variants
+  are ignored when \code{normalize = FALSE}. For an input answered this way
+  \code{input_standardised} is the matched GNAF label, the parsed \code{in_*}
+  columns describe the matched address (normalised as the parser would), and a
+  lot-only label is reported as \code{exact_components}. The index is ignored
+  if \code{gnaf_addresses} has changed since it was built, so a stale index can
+  never name the wrong address; rebuild it with
+  \code{\link{gnaf_rebuild_exact_index}} after modifying the table yourself.
+  Inputs answered by the index are not written to the match cache, since they
+  never consult it.
 
   Street directions qualify the street-type score: agreement keeps full
   credit, a missing direction halves it, and conflicting directions score

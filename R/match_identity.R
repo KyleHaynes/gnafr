@@ -89,9 +89,21 @@
   pairs
 }
 
+# Ties in score fall to the address whose house number is closest to the one
+# requested, then to the PID: when a number is missing from GNAF, the nearest
+# real house on the street is the best available location, where the lowest PID
+# is arbitrary. Rows from the SQL paths carry `number_distance`; exact-label and
+# cache rows carry the parsed number instead, and lack it when neither exists.
+# gnaf_match() drops the column once the final order is fixed.
 .order_address_matches <- function(matches) {
+  if (!"number_distance" %in% names(matches))
+    matches[, number_distance := NA_integer_]
+  if (all(c("in_number_first", "number_first") %in% names(matches)))
+    matches[is.na(number_distance),
+            number_distance := as.integer(abs(number_first - in_number_first))]
   matches[, .identity_rank := match(match_basis, c("exact_components", "postcode_only", "weighted"))]
-  setorder(matches, input_id, .identity_rank, -total_score, address_detail_pid)
+  setorder(matches, input_id, .identity_rank, -total_score, number_distance,
+           address_detail_pid, na.last = TRUE)
   matches[, .identity_rank := NULL]
   matches
 }

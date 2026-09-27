@@ -4,7 +4,13 @@
 \alias{gnaf_load}
 \title{Load GNAF CSV data into the database}
 \usage{
-gnaf_load(con, path, overwrite = FALSE)
+gnaf_load(
+  con,
+  path,
+  overwrite = FALSE,
+  collapse_same_coordinates = FALSE,
+  exact_index = TRUE
+)
 }
 \arguments{
 \item{con}{DBI connection from \code{gnaf_connect}.}
@@ -12,6 +18,20 @@ gnaf_load(con, path, overwrite = FALSE)
 \item{path}{Character vector of one or more paths to GNAF CSV files.}
 
 \item{overwrite}{If \code{TRUE}, deletes existing GNAF rows before loading.}
+
+\item{collapse_same_coordinates}{If \code{TRUE}, remove GNAF secondary
+addresses whose linked primary is present and has exactly the same finite
+longitude and latitude, including aliases of those secondaries. Defaults
+to \code{FALSE}, preserving unit-level detail. Missing links or coordinates
+are retained; custom addresses are untouched. Applies to all GNAF rows
+after the CSV batch loads, including previously loaded rows. Reload with
+this option off to restore removed records. Matching then searches the
+remaining addresses, so unit-level match scores and coverage may change.}
+
+\item{exact_index}{If \code{TRUE} (default), rebuild the exact-label index
+(\code{\link{gnaf_rebuild_exact_index}}) after loading, which lets
+\code{gnaf_match()} skip parsing inputs that are already GNAF labels. Use
+\code{FALSE} to defer it and call \code{gnaf_rebuild_exact_index()} yourself.}
 }
 \value{
 Invisibly, the total number of GNAF rows now in the database.

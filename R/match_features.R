@@ -63,7 +63,9 @@ gnaf_match_features <- function(x) {
   # Recompute fixed features so changing retrieval weights cannot silently
   # change a fitted model's predictor scale. Do not overwrite ranking scores.
   component_names <- paste0("score_", names(.WEIGHTS))
-  scored <- .score_pairs(pairs, stats::setNames(rep(list(100), length(.WEIGHTS)), names(.WEIGHTS)))
+  # Raw agreement per component, so the street gate (a ranking device) is off.
+  scored <- .score_pairs(pairs, stats::setNames(rep(list(100), length(.WEIGHTS)), names(.WEIGHTS)),
+                         street_gate = FALSE)
   for (name in component_names) add(sub("^score_", "agreement_", name), scored[[name]] / 100)
   text_names <- c("jarowinkler_score", "jaccard_score", "levenshtein_score", "text_similarity")
   for (source in c("raw", "standardised")) {

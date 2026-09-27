@@ -25,12 +25,29 @@
 # street-type match, it is frequently the suburb rather than the real street
 # type; both the vectorized fast path and the scalar fallback parser search
 # for an earlier, unambiguous street-type token before trusting it.
+#
+# A word belongs here when real localities end in it far more often than real
+# streets are typed with it. Counted on QLD G-NAF: PARADISE (Surfers Paradise),
+# LOOKOUT (Point Lookout), DOWNS (17 localities, no streets), RANGE, BRANCH and
+# ESTATE (no streets), RIDGE (Acacia/Bracken Ridge), COVE (Palm Cove) and HARBOUR.
+# Without them "3 Main St Surfers Paradise" reads PARADISE as the street type.
+# GAP, RESERVE, GARDENS, POCKET, LANDING, GRANGE, NEST, FLAT and JUNCTION were
+# checked the same way against every distinct QLD street/locality pair: read as
+# collision words they repair ~1,500 inputs and break none. CORNER stays out (it
+# is a real street type: "Blue Hills Corner") and so does EDGE (no fixes).
 .LOCALITY_COLLISION_WORDS <- c(
   "ST", "NORTH", "NTH", "SOUTH", "STH", "EAST", "WEST", "HILL",
   "HILLS", "HEIGHTS", "BAY", "BEACH", "ISLAND", "PARK", "POINT",
   "PORT", "VALLEY", "VIEW", "MILE", "RING", "END", "RIVER",
-  "GLEN", "GROVE", "RISE", "VALE", "DALE", "WATERS", "WOOD"
+  "GLEN", "GROVE", "RISE", "VALE", "DALE", "WATERS", "WOOD",
+  "PARADISE", "LOOKOUT", "DOWNS", "RANGE", "BRANCH", "ESTATE",
+  "RIDGE", "COVE", "HARBOUR", "GAP", "RESERVE", "GARDENS", "POCKET",
+  "LANDING", "GRANGE", "NEST", "FLAT", "JUNCTION"
 )
+
+# Words that end the *street* rather than begin a locality when they follow a
+# street type ("SMITH ST NORTH"), so they never move across a comma.
+.STREET_TAIL_WORDS <- c("ST", "NORTH", "NTH", "SOUTH", "STH", "EAST", "WEST")
 
 # Backtrack over adjacent locality words (WEST END), while keeping a street
 # abbreviation such as ST and rejecting candidates inside building names.
@@ -341,12 +358,53 @@ address_parse <- function(addresses, normalize = TRUE) {
   geo$state[take_state] <- locality_geo$state[take_state]
   geo$postcode[take_postcode] <- locality_geo$postcode[take_postcode]
 
+  moved <- .misplaced_locality_word(left, meaningful, resources)
+  if (any(moved$hit)) {
+    left[moved$hit] <- moved$street[moved$hit]
+    locality[moved$hit] <- paste(moved$word[moved$hit], locality[moved$hit])
+  }
+
   resolved <- .resolve_boundary_street_types(left, meaningful, resources)
   list(
     meaningful = meaningful, street = left, locality = locality,
     type_start = resolved$start, type_end = resolved$end,
     type = resolved$canonical, state = geo$state, postcode = geo$postcode
   )
+}
+
+# A comma that splits a multi-word locality ("19 EXCALIBUR CT PARADISE, POINT")
+# leaves the locality's first word at the end of the street part, where it reads
+# as a second street type. When an explicit type with a real name before it
+# already precedes that word, the earlier type is the street's own and the word
+# belongs to the locality. Only words that mostly end localities qualify (see
+# .LOCALITY_COLLISION_WORDS), and never a direction that trails the street.
+.misplaced_locality_word <- function(street, meaningful, resources) {
+  n <- length(street)
+  out <- list(hit = rep(FALSE, n), street = rep(NA_character_, n),
+              word = rep(NA_character_, n))
+  idx <- which(meaningful)
+  if (length(idx) == 0L) return(out)
+
+  parts <- stringi::stri_match_first_regex(street[idx], "^(.*\\S)\\s+([A-Z]+)$")
+  head <- parts[, 2L]
+  word <- parts[, 3L]
+  candidate <- !is.na(head) &
+    word %in% setdiff(.LOCALITY_COLLISION_WORDS, .STREET_TAIL_WORDS)
+  if (!any(candidate)) return(out)
+
+  loc <- stringi::stri_locate_last_regex(head, resources$st_regex)
+  prefix <- fast.string::ftrimws(stringi::stri_sub(head, 1L, pmax(0L, loc[, 1L] - 1L)))
+  # Mirrors the sole-name checks in .resolve_boundary_street_types(): a bare
+  # number or "THE" before the earlier type means it is the street's whole name.
+  named <- candidate & !is.na(loc[, 1L]) & loc[, 2L] == stringi::stri_length(head) &
+    nzchar(prefix) &
+    !stringi::stri_detect_regex(prefix, "\\b\\d+[A-Z]?(?:-\\d+[A-Z]?)?$") &
+    !stringi::stri_detect_regex(prefix, "\\bTHE$")
+  hit <- idx[named]
+  out$hit[hit] <- TRUE
+  out$street[hit] <- head[named]
+  out$word[hit] <- word[named]
+  out
 }
 
 .resolve_boundary_street_types <- function(street, meaningful, resources) {

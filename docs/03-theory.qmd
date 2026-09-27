@@ -339,7 +339,9 @@ in practice: the **street-number-relaxed fallback** (@sec-matching-paths) drops 
 number constraint and re-searches by street name whenever the best result so far is
 weak, letting the correct street compete on its own (honestly number-scored) merits —
 the same input above resolves under the defaults used everywhere else in this
-document:
+document. Because number and unit credit is scaled by street agreement
+(@sec-street-gate), a different street that merely shares the input's number cannot
+outrank it:
 
 ```{r}
 gnaf_match("999 Musgrave Road, Red Hill QLD 4059", local({
@@ -381,6 +383,32 @@ scores 4, and unit 2 on level 4 scores 3. These are heuristic agreement scores,
 not calibrated probabilities: even a high total can contain a unit conflict.
 Use component scores and labelled examples to set acceptance criteria.
 
+### Number and unit credit is conditional on the street {#sec-street-gate}
+
+A house number or unit only locates an address *within* a street. Agreement on
+either says nothing when the street itself is different, so `score_number` and
+`score_flat` are scaled by a **street gate**: 1 for the same street, falling with
+the same name similarity that drives `score_street_name`, and left at 1 when either
+street name is missing (there is nothing to gate on, so lot-only inputs are
+unaffected). A near-miss spelling keeps most of its number and unit credit; an
+unrelated street keeps almost none.
+
+Without the gate the components simply add up, so a *different* street that happens
+to share the input's number and unit could collect the whole number-plus-flat weight
+and outrank the correct street whose number isn't in G-NAF yet (for example because
+new development lags the release). With it, that wrong street falls far below the
+right one, which the street-number-relaxed fallback below retrieves and returns with
+an honestly low `score_number`. When several addresses on the right street tie, the
+one whose house number is nearest the input's ranks first, then the lowest PID.
+
+The gate is part of the ranking score only. `total_score` is still the sum of its
+component columns, and [`gnaf_match_features()`](05-function-reference.qmd) still
+reports raw agreement for each component. Two spellings of one street can differ
+slightly between R and DuckDB's Jaro-Winkler, so the R twin of the scorer (used for
+exact-label matches and in tests) can differ by a point on a mis-spelt street; the
+DuckDB scores are the ones `gnaf_match()` ranks by. Cache algorithm version 19
+ignores scores computed without the gate.
+
 The six public weights and score columns remain unchanged. Locality and alias
 fallback cutoffs scale with custom weights, and cache algorithm version 12 ignores
 scores computed by older versions.
@@ -388,6 +416,34 @@ scores computed by older versions.
 ## Matching paths {#sec-matching-paths}
 
 `gnaf_match()` tries, in order, stopping as soon as an input is satisfied:
+
+### 0. Exact-label index {#sec-exact-index}
+
+Before anything is parsed, each input is reduced to a *key* - upper case, commas and
+full stops removed, whitespace collapsed, spaces around `-` and `/` removed - and
+looked up in `gnaf_exact_index`. The index holds the same key for every **principal**
+address label, plus (unless built with `variants = FALSE`) the written variants users
+commonly type: the flat word shortened (`UNIT` as `U`, or `5/12` notation), the
+street type shortened (`STREET` as `ST`, `AVENUE` as `AVE`), and the state omitted. For
+`UNIT 50 11 ROLLESTON STREET, KEPERRA QLD 4054` that is twelve keys, among them
+`U 50 11 ROLLESTON ST KEPERRA 4054` and `50/11 ROLLESTON STREET KEPERRA QLD 4054`.
+
+An input whose key names exactly one address is answered on the spot. It is not
+parsed, standardised or scored: every component takes its full weight (imputed
+through the real scorer, so custom `weights` still work), `match_basis` is
+`exact_components`, and the `in_*` columns are the matched address's own components.
+The index is conservative - it is used only for `max_results = 1` with the default
+alias handling, indexes principal rows only (so a street-synonym alias can never
+shadow the address that owns a label), drops any key that would name two addresses or
+that is also a custom address's label, prefers a genuine label over a variant of some
+other address, and is ignored when `gnaf_addresses` no longer matches the table it was
+built from. Everything it does not answer continues down the paths below.
+
+On 1.4 million labels sampled from a QLD database this replaced roughly eleven minutes
+of parsing, scoring and exact-label lookup with under a minute, and it also returned
+the right PID more often (99.9% against 97.7%): the earlier route could pick a
+street-synonym alias sharing a real address's label, and never reported lot-only
+labels as exact.
 
 ### 1. Exact label match
 

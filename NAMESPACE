@@ -25,6 +25,7 @@ export(gnaf_load)
 export(gnaf_load_psv)
 export(gnaf_match)
 export(gnaf_match_features)
+export(gnaf_rebuild_exact_index)
 export(gnaf_rebuild_locality_index)
 export(gnaf_rebuild_street_type_index)
 export(gnaf_register_geography)
@@ -58,8 +59,12 @@ importFrom(cli,
   col_blue,
   col_cyan,
   col_green,
+  col_grey,
   col_magenta,
-  col_yellow
+  col_yellow,
+  combine_ansi_styles,
+  is_utf8_output,
+  style_bold
 )
 importFrom(duckdb,
   duckdb,

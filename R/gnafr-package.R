@@ -4,10 +4,16 @@
 #' Address File (GNAF). Supports bulk lookup (100k+), a confidence scoring
 #' algorithm, DuckDB-backed storage, and custom address additions.
 #'
+#' Loading the package prints the function index below as a tree. Silence it
+#' with `options(gnafr.verbose = FALSE)` before [library()], or wrap the call
+#' in [suppressPackageStartupMessages()].
+#'
+#' @eval .index_roxygen()
+#'
 #' @docType package
 #' @name gnafr-package
 #' @import data.table
-#' @importFrom cli cli_alert_danger cli_alert_info cli_alert_success cli_alert_warning cli_h1 cli_li cli_text col_blue col_cyan col_green col_magenta col_yellow
+#' @importFrom cli cli_alert_danger cli_alert_info cli_alert_success cli_alert_warning cli_h1 cli_li cli_text col_blue col_cyan col_green col_grey col_magenta col_yellow combine_ansi_styles is_utf8_output style_bold
 #' @importFrom DBI dbConnect dbDisconnect dbExecute dbExistsTable dbGetQuery dbWriteTable
 #' @importFrom duckdb duckdb duckdb_register duckdb_unregister
 #' @importFrom stringdist stringdist
