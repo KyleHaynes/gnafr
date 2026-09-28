@@ -11,3 +11,5 @@
 ^.*\.rds$
 ^gnafr\.code-workspace$
 ^_todo\.md$
+^Adding PLI\.md$
+^PLI\.xml$

@@ -16,6 +16,7 @@
     "Data loading" = list(
         gnaf_load                      = "load GNAF data from CSV",
         gnaf_load_psv                  = "load GNAF data from PSV files",
+        gnaf_load_pli                  = "add Queensland PLI addresses",
         gnaf_build_street_aliases      = "street-only fallback rows",
         gnaf_canonicalize_street_types = "canonicalise street types",
         gnaf_rebuild_locality_index    = "rebuild locality search index",

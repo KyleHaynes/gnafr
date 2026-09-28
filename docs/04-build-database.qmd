@@ -194,6 +194,20 @@ before the index existed, or after changing `gnaf_addresses` outside gnafr's loa
 functions; a stale index is detected and ignored rather than trusted, and
 `gnaf_match()` falls back to the full pipeline.
 
+## Step 4c (optional) — Queensland Property Location Index
+
+```{r}
+#| eval: false
+gnaf_load_pli(con, "C:/Users/me/Downloads/DP_PROP_LOCATION_INDEX_QLD.zip")
+```
+
+G-NAF lags new development, and the Queensland Government's Property Location Index (PLI)
+holds addresses G-NAF does not yet have. `gnaf_load_pli()` adds the ones missing from
+G-NAF (compared by label), wrangled the way this chapter's loaders wrangle G-NAF, and
+prints how many were already in G-NAF and how many were added. Run it after the steps
+above, and again with `overwrite = TRUE` whenever you reload G-NAF or download a newer
+PLI. The full guide is `Adding PLI.md` in the repository root.
+
 ## Step 5 (optional) — Custom addresses
 
 ```{r}
